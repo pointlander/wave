@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	randv2 "math/rand/v2"
 )
@@ -172,4 +173,49 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 func newRNG(seed int64) *randRand {
 	s := uint64(seed)
 	return randv2.New(randv2.NewPCG(s, s^0x9e3779b97f4a7c15))
+}
+
+// simulate emits the initial state, then advances until duration of wall-clock
+// time has elapsed. A zero duration uses cfg.Steps instead. The initial frame
+// is step 0 and does not count toward the step total.
+func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, emit func(step int, simTime float64, ps []Particle, res StepResult) error) (steps int, elapsed time.Duration, first, last StepResult, err error) {
+	if err = cfg.Validate(); err != nil {
+		return 0, 0, StepResult{}, StepResult{}, err
+	}
+	first, err = Observe(cfg, ps)
+	if err != nil {
+		return 0, 0, StepResult{}, StepResult{}, err
+	}
+	first.HNewton = first.HJoint
+	last = first
+	if emit != nil {
+		if err = emit(0, 0, ps, first); err != nil {
+			return 0, 0, StepResult{}, StepResult{}, err
+		}
+	}
+	start := time.Now()
+	simTime := 0.0
+	for {
+		if duration > 0 {
+			if time.Since(start) >= duration {
+				break
+			}
+		} else if steps >= cfg.Steps {
+			break
+		}
+		var res StepResult
+		ps, res, err = Step(cfg, rng, ps)
+		if err != nil {
+			return steps, time.Since(start), first, last, err
+		}
+		steps++
+		simTime += cfg.DT
+		last = res
+		if emit != nil {
+			if err = emit(steps, simTime, ps, res); err != nil {
+				return steps, time.Since(start), first, last, err
+			}
+		}
+	}
+	return steps, time.Since(start), first, last, nil
 }

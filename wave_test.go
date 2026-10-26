@@ -9,8 +9,12 @@ import (
 	"math"
 	"math/cmplx"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func testConfig() Config {
@@ -260,5 +264,130 @@ func TestWriteFrame(t *testing.T) {
 	}
 	if !bright {
 		t.Fatal("spatial panel is empty")
+	}
+}
+
+func TestDurationFlag(t *testing.T) {
+	var d durationFlag
+	if err := d.Set("30"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Duration(d) != 30*time.Second {
+		t.Fatalf("bare seconds = %v", time.Duration(d))
+	}
+	if err := d.Set("30s"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Duration(d) != 30*time.Second {
+		t.Fatalf("30s = %v", time.Duration(d))
+	}
+	if err := d.Set("-1s"); err == nil {
+		t.Fatal("expected negative duration to fail")
+	}
+}
+
+func TestSimulateHonorsStepCount(t *testing.T) {
+	cfg := testConfig()
+	cfg.Steps = 2
+	ps, err := Initialize(cfg, newRNG(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, _, _, _, err := simulate(cfg, newRNG(1), ps, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps != 2 {
+		t.Fatalf("steps = %d", steps)
+	}
+}
+
+func TestSimulateHonorsDuration(t *testing.T) {
+	cfg := testConfig()
+	cfg.N = 4
+	cfg.Grid = 16
+	cfg.PopSize = 4
+	cfg.Gens = 1
+	cfg.Elite = 1
+	cfg.Steps = 1_000_000
+	ps, err := Initialize(cfg, newRNG(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = 200 * time.Millisecond
+	steps, elapsed, _, _, err := simulate(cfg, newRNG(1), ps, limit, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps < 1 {
+		t.Fatalf("steps = %d", steps)
+	}
+	if elapsed < limit {
+		t.Fatalf("elapsed %v shorter than %v", elapsed, limit)
+	}
+	if elapsed > limit+2*time.Second {
+		t.Fatalf("elapsed %v ran well past %v after %d steps", elapsed, limit, steps)
+	}
+}
+
+func TestFFmpegArgsUseVP9(t *testing.T) {
+	args := ffmpegArgs("out.webm", 12)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"image2pipe", "pipe:0", "libvpx-vp9", "yuv420p", "-f webm", "out.webm"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args %q missing %q", joined, want)
+		}
+	}
+}
+
+func TestWebMPipe(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip(err)
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip(err)
+	}
+	cfg := testConfig()
+	ps, err := Initialize(cfg, newRNG(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "sim.webm")
+	w, err := newWebMWriter(path, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const frames = 3
+	for i := 0; i < frames; i++ {
+		if err := w.writeFrame(cfg, ps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(
+		"ffprobe", "-v", "error", "-count_frames",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=codec_name,width,height,nb_read_frames",
+		"-show_entries", "format=format_name",
+		"-of", "default=noprint_wrappers=1",
+		path,
+	).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	wants := []string{
+		"codec_name=vp9",
+		"width=" + strconv.Itoa(cfg.Grid*2+2),
+		"height=" + strconv.Itoa(cfg.Grid),
+		"nb_read_frames=" + strconv.Itoa(frames),
+		"webm",
+	}
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Fatalf("probe %q missing %q", text, want)
+		}
 	}
 }

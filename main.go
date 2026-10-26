@@ -17,13 +17,24 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "wave: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() (err error) {
 	cfg := DefaultConfig()
 	outDir := ""
+	webmPath := ""
+	fps := 12
+	var runFor durationFlag
 	flag.IntVar(&cfg.N, "n", cfg.N, "number of particles")
-	flag.IntVar(&cfg.Steps, "steps", cfg.Steps, "number of time steps after the initial state")
+	flag.IntVar(&cfg.Steps, "steps", cfg.Steps, "number of time steps after the initial state, used when -duration is 0")
 	flag.Float64Var(&cfg.DT, "dt", cfg.DT, "Newtonian time step")
 	flag.IntVar(&cfg.Grid, "grid", cfg.Grid, "field grid size, a power of two")
 	flag.IntVar(&cfg.PopSize, "pop", cfg.PopSize, "genetic population size")
@@ -39,95 +50,126 @@ func main() {
 	flag.Float64Var(&cfg.MutVel, "mutvel", cfg.MutVel, "velocity mutation scale")
 	flag.Float64Var(&cfg.MutPhase, "mutphase", cfg.MutPhase, "phase mutation scale")
 	flag.StringVar(&outDir, "out", "", "directory for PNG frames and trace.csv")
+	flag.StringVar(&webmPath, "webm", "", "pipe frames to ffmpeg and write a VP9 WebM")
+	flag.IntVar(&fps, "fps", fps, "frame rate of the WebM")
+	flag.Var(&runFor, "duration", "wall-clock limit, such as 30s or 30; overrides -steps")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of wave packets. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "genetic search for the lowest spatial plus spectral entropy\n")
 		fmt.Fprintf(os.Stderr, "in a neighborhood of the Newtonian proposal.\n\n")
-		fmt.Fprintf(os.Stderr, "With -out, each frame is |Ψ|² on the left and |Ψ̂|² on the right.\n\n")
+		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")
+		fmt.Fprintf(os.Stderr, "-out writes PNGs. -webm pipes those frames to ffmpeg as VP9.\n")
+		fmt.Fprintf(os.Stderr, "-duration 30s keeps stepping for 30 seconds of real time.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	var (
 		csvW *csv.Writer
 		file *os.File
+		enc  *webmWriter
 	)
+	if webmPath != "" {
+		enc, err = newWebMWriter(webmPath, fps)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := enc.Close(); cerr != nil && err == nil {
+				err = cerr
+			}
+		}()
+	}
 	if outDir != "" {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
+			return err
 		}
-		var err error
 		file, err = os.Create(filepath.Join(outDir, "trace.csv"))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 		defer file.Close()
 		csvW = csv.NewWriter(file)
 		if err := csvW.Write(traceHeader()); err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 	}
 
 	rng := newRNG(cfg.Seed)
 	ps, err := Initialize(cfg, rng)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-	first, err := Observe(cfg, ps)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-		os.Exit(1)
-	}
-	first.HNewton = first.HJoint
 	printHeader()
-	printRow(0, 0, first)
-	if err := writeOutputs(outDir, csvW, cfg, ps, 0, 0, first); err != nil {
-		fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-		os.Exit(1)
-	}
-
-	last := first
-	t := 0.0
-	gain := 0.0
-	for step := 1; step <= cfg.Steps; step++ {
-		var res StepResult
-		ps, res, err = Step(cfg, rng, ps)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
+	var gain float64
+	steps, elapsed, first, last, err := simulate(cfg, rng, ps, time.Duration(runFor), func(step int, simTime float64, ps []Particle, res StepResult) error {
+		if step > 0 {
+			gain += res.HNewton - res.HJoint
 		}
-		t += cfg.DT
-		gain += res.HNewton - res.HJoint
-		printRow(step, t, res)
-		if err := writeOutputs(outDir, csvW, cfg, ps, step, t, res); err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
-		}
-		last = res
+		printRow(step, simTime, res)
+		return writeOutputs(outDir, csvW, enc, cfg, ps, step, simTime, res)
+	})
+	if err != nil {
+		return err
 	}
 	if csvW != nil {
 		csvW.Flush()
 		if err := csvW.Error(); err != nil {
-			fmt.Fprintf(os.Stderr, "wave: %v\n", err)
-			os.Exit(1)
+			return err
+		}
+	}
+	if enc != nil {
+		if err := enc.Close(); err != nil {
+			return err
 		}
 	}
 	fmt.Printf("\njoint entropy %.4f -> %.4f\n", first.HJoint, last.HJoint)
 	fmt.Printf("spatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
 		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
-	if cfg.Steps > 0 {
-		fmt.Printf("mean entropy improvement over the Newtonian proposal %.4f\n", gain/float64(cfg.Steps))
+	if steps > 0 {
+		fmt.Printf("mean entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 	}
+	if runFor > 0 {
+		fmt.Printf("ran %d steps in %.3fs\n", steps, elapsed.Seconds())
+	}
+	if webmPath != "" {
+		fmt.Printf("wrote %s\n", webmPath)
+	}
+	return nil
+}
+
+// durationFlag accepts a Go duration (30s, 1m) or a bare number of seconds.
+type durationFlag time.Duration
+
+func (d *durationFlag) String() string {
+	if d == nil || *d == 0 {
+		return "0"
+	}
+	return time.Duration(*d).String()
+}
+
+func (d *durationFlag) Set(s string) error {
+	if v, err := time.ParseDuration(s); err == nil {
+		if v < 0 {
+			return fmt.Errorf("duration must be non-negative")
+		}
+		*d = durationFlag(v)
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("duration %q is not a number of seconds or a Go duration", s)
+	}
+	if v < 0 {
+		return fmt.Errorf("duration must be non-negative")
+	}
+	*d = durationFlag(time.Duration(v * float64(time.Second)))
+	return nil
 }
 
 func traceHeader() []string {
@@ -147,24 +189,32 @@ func printRow(step int, time float64, r StepResult) {
 		step, time, r.HSpatial, r.HFrequency, r.HJoint, r.HNewton, r.Separation, r.Kinetic, r.Potential)
 }
 
-func writeOutputs(dir string, csvW *csv.Writer, cfg Config, ps []Particle, step int, time float64, r StepResult) error {
-	if dir == "" {
+func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps []Particle, step int, time float64, r StepResult) error {
+	if dir == "" && enc == nil {
 		return nil
 	}
-	row := []string{
-		strconv.Itoa(step),
-		strconv.FormatFloat(time, 'f', 6, 64),
-		strconv.FormatFloat(r.HSpatial, 'f', 6, 64),
-		strconv.FormatFloat(r.HFrequency, 'f', 6, 64),
-		strconv.FormatFloat(r.HJoint, 'f', 6, 64),
-		strconv.FormatFloat(r.HNewton, 'f', 6, 64),
-		strconv.FormatFloat(r.Separation, 'f', 6, 64),
-		strconv.FormatFloat(r.Kinetic, 'f', 6, 64),
-		strconv.FormatFloat(r.Potential, 'f', 6, 64),
+	if csvW != nil {
+		row := []string{
+			strconv.Itoa(step),
+			strconv.FormatFloat(time, 'f', 6, 64),
+			strconv.FormatFloat(r.HSpatial, 'f', 6, 64),
+			strconv.FormatFloat(r.HFrequency, 'f', 6, 64),
+			strconv.FormatFloat(r.HJoint, 'f', 6, 64),
+			strconv.FormatFloat(r.HNewton, 'f', 6, 64),
+			strconv.FormatFloat(r.Separation, 'f', 6, 64),
+			strconv.FormatFloat(r.Kinetic, 'f', 6, 64),
+			strconv.FormatFloat(r.Potential, 'f', 6, 64),
+		}
+		if err := csvW.Write(row); err != nil {
+			return err
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%04d.png", step))
+		if err := WriteFrame(path, cfg, ps); err != nil {
+			return err
+		}
 	}
-	if err := csvW.Write(row); err != nil {
-		return err
+	if enc != nil {
+		return enc.writeFrame(cfg, ps)
 	}
-	path := filepath.Join(dir, fmt.Sprintf("frame_%04d.png", step))
-	return WriteFrame(path, cfg, ps)
+	return nil
 }

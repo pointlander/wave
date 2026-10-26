@@ -12,11 +12,11 @@ import (
 	"os"
 )
 
-// WriteFrame writes a side-by-side PNG of the spatial density |Ψ|²
-// (left) and the fftshifted spectral power |Ψ̂|² (right).
-func WriteFrame(path string, cfg Config, ps []Particle) error {
+// renderImage builds a side-by-side frame: spatial density |Ψ|² on the
+// left and the fftshifted spectral power |Ψ̂|² on the right.
+func renderImage(cfg Config, ps []Particle) (*image.RGBA, error) {
 	if err := cfg.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	ev := newEvaluator(cfg)
 	density, spectrum := ev.densityAndSpectrum(ps)
@@ -25,6 +25,15 @@ func WriteFrame(path string, cfg Config, ps []Particle) error {
 	img := image.NewRGBA(image.Rect(0, 0, g*2+gap, g))
 	paint(img, 0, normalizeLog(density), g)
 	paint(img, g+gap, normalizeLog(spectrum), g)
+	return img, nil
+}
+
+// WriteFrame writes a PNG of the spatial density and the spectrum.
+func WriteFrame(path string, cfg Config, ps []Particle) error {
+	img, err := renderImage(cfg, ps)
+	if err != nil {
+		return err
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return err
