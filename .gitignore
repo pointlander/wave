@@ -1,0 +1,12 @@
+# Built command and test binaries
+/wave
+*.exe
+*.test
+*.out
+
+# Simulation products
+*.webm
+*.png
+trace.csv
+frames/
+out/
