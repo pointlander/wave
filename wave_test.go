@@ -208,6 +208,50 @@ func TestFitnessRatio(t *testing.T) {
 	}
 }
 
+func TestMechanicsAgree(t *testing.T) {
+	a := []Particle{{
+		S: Spatial{X: 0.2, Y: 0.3, VX: 0.1, VY: -0.2},
+		F: Frequency{Phase: 0.4},
+	}}
+	b := cloneParticles(a)
+	if !mechanicsAgree(a, b, 1) {
+		t.Fatal("identical states disagree")
+	}
+	b[0].S.X = 0.21
+	if mechanicsAgree(a, b, 1) {
+		t.Fatal("shifted state agrees")
+	}
+	b = cloneParticles(a)
+	b[0].S.X = 0.2 + 1
+	if !mechanicsAgree(a, b, 1) {
+		t.Fatal("periodic copy disagrees")
+	}
+	b = cloneParticles(a)
+	b[0].F.Phase = 0.4 + 2*math.Pi
+	if !mechanicsAgree(a, b, 1) {
+		t.Fatal("wrapped phase disagrees")
+	}
+}
+
+func TestNewtonianAgreesWhenMutationsAreOff(t *testing.T) {
+	cfg := testConfig()
+	cfg.Steps = 2
+	cfg.MutPos = 0
+	cfg.MutVel = 0
+	cfg.MutPhase = 0
+	ps, err := Initialize(cfg, newRNG(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, _, _, last, err := simulate(cfg, newRNG(1), ps, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps != 2 || last.AgreeCount != 2 || math.Abs(last.AgreeRate-1) > 1e-12 {
+		t.Fatalf("steps %d agree %d rate %v", steps, last.AgreeCount, last.AgreeRate)
+	}
+}
+
 func TestSelectionDoesNotExceedNewton(t *testing.T) {
 	cfg := testConfig()
 	rng := newRNG(cfg.Seed)

@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	randv2 "math/rand/v2"
@@ -114,6 +115,8 @@ func (c Config) Validate() error {
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness
 // so the genetic improvement is visible. Fitness is H_frequency / H_spatial.
+// Agree is true when the accepted state matches the Newtonian proposal.
+// AgreeCount and AgreeRate accumulate that comparison over the run.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
@@ -122,6 +125,9 @@ type StepResult struct {
 	Separation float64
 	Kinetic    float64
 	Potential  float64
+	Agree      bool
+	AgreeCount int
+	AgreeRate  float64
 }
 
 // Observe measures the current state. Newton is left at 0; a step that
@@ -166,8 +172,41 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 		Separation: meanSeparation(best, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
+		Agree:      mechanicsAgree(best, proposal, cfg.L),
 	}
 	return best, res, nil
+}
+
+// mechanicsAgree reports whether two states describe the same mechanics.
+// Positions are compared on the periodic box. Phase is compared on the circle.
+func mechanicsAgree(a, b []Particle, L float64) bool {
+	const tol = 1e-8
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if math.Abs(minImage(a[i].S.X-b[i].S.X, L)) > tol || math.Abs(minImage(a[i].S.Y-b[i].S.Y, L)) > tol {
+			return false
+		}
+		if math.Abs(a[i].S.VX-b[i].S.VX) > tol || math.Abs(a[i].S.VY-b[i].S.VY) > tol {
+			return false
+		}
+		if phaseDelta(a[i].F.Phase, b[i].F.Phase) > tol {
+			return false
+		}
+	}
+	return true
+}
+
+func phaseDelta(a, b float64) float64 {
+	d := math.Mod(a-b, 2*math.Pi)
+	if d < 0 {
+		d += 2 * math.Pi
+	}
+	if d > math.Pi {
+		d = 2*math.Pi - d
+	}
+	return d
 }
 
 func newRNG(seed int64) *randRand {
@@ -195,6 +234,7 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 	}
 	start := time.Now()
 	simTime := 0.0
+	agreed := 0
 	for {
 		if duration > 0 {
 			if time.Since(start) >= duration {
@@ -209,6 +249,11 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 			return steps, time.Since(start), first, last, err
 		}
 		steps++
+		if res.Agree {
+			agreed++
+		}
+		res.AgreeCount = agreed
+		res.AgreeRate = float64(agreed) / float64(steps)
 		simTime += cfg.DT
 		last = res
 		if emit != nil {

@@ -30,7 +30,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation, kinetic energy, and potential energy.
+A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation, kinetic energy, and potential energy. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 

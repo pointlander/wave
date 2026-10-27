@@ -132,6 +132,7 @@ func run() (err error) {
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
 		fmt.Printf("mean fitness improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
+		fmt.Printf("newtonian agreement %d/%d (%.3f)\n", last.AgreeCount, steps, last.AgreeRate)
 	}
 	if runFor > 0 {
 		fmt.Printf("ran %d steps in %.3fs\n", steps, elapsed.Seconds())
@@ -174,18 +175,29 @@ func (d *durationFlag) Set(s string) error {
 func traceHeader() []string {
 	return []string{
 		"step", "time", "h_spatial", "h_frequency", "fitness", "newton",
-		"separation", "kinetic", "potential",
+		"separation", "kinetic", "potential", "agree", "agree_rate",
 	}
 }
 
 func printHeader() {
-	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %9s %10s\n",
-		"step", "time", "H_space", "H_freq", "Hf/Hs", "newton", "sep", "kinetic", "potential")
+	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %9s %10s %5s %10s\n",
+		"step", "time", "H_space", "H_freq", "Hf/Hs", "newton", "sep", "kinetic", "potential", "agree", "agree_rate")
 }
 
 func printRow(step int, time float64, r StepResult) {
-	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.4f %9.4f %10.4f\n",
-		step, time, r.HSpatial, r.HFrequency, r.Fitness, r.Newton, r.Separation, r.Kinetic, r.Potential)
+	agree := 0
+	if r.Agree {
+		agree = 1
+	}
+	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.4f %9.4f %10.4f %5d %10.4f\n",
+		step, time, r.HSpatial, r.HFrequency, r.Fitness, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps []Particle, step int, time float64, r StepResult) error {
@@ -203,6 +215,8 @@ func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps 
 			strconv.FormatFloat(r.Separation, 'f', 6, 64),
 			strconv.FormatFloat(r.Kinetic, 'f', 6, 64),
 			strconv.FormatFloat(r.Potential, 'f', 6, 64),
+			strconv.Itoa(boolInt(r.Agree)),
+			strconv.FormatFloat(r.AgreeRate, 'f', 6, 64),
 		}
 		if err := csvW.Write(row); err != nil {
 			return err
