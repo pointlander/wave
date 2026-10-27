@@ -112,19 +112,19 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// StepResult is one accepted state, plus the Newtonian proposal's joint
-// entropy so the genetic improvement is visible.
+// StepResult is one accepted state, plus the Newtonian proposal's fitness
+// so the genetic improvement is visible. Fitness is H_frequency / H_spatial.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
-	HJoint     float64
-	HNewton    float64
+	Fitness    float64
+	Newton     float64
 	Separation float64
 	Kinetic    float64
 	Potential  float64
 }
 
-// Observe measures the current state. HNewton is left at 0; a step that
+// Observe measures the current state. Newton is left at 0; a step that
 // has not yet searched has no proposal to compare.
 func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	if err := cfg.Validate(); err != nil {
@@ -135,7 +135,7 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	return StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
-		HJoint:     hs + hf,
+		Fitness:    fitness(hs, hf),
 		Separation: meanSeparation(ps, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
@@ -143,8 +143,8 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 }
 
 // Step seeds a genetic search with a Newtonian proposal and accepts the
-// candidate with the lowest sum of spatial and spectral entropies.
-// Momentum is held at the value of ps.
+// candidate with the lowest H_frequency / H_spatial. Momentum is held
+// at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, StepResult{}, err
@@ -161,8 +161,8 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 	res := StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
-		HJoint:     hs + hf,
-		HNewton:    nHs + nHf,
+		Fitness:    fitness(hs, hf),
+		Newton:     fitness(nHs, nHf),
 		Separation: meanSeparation(best, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
@@ -186,7 +186,7 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 	if err != nil {
 		return 0, 0, StepResult{}, StepResult{}, err
 	}
-	first.HNewton = first.HJoint
+	first.Newton = first.Fitness
 	last = first
 	if emit != nil {
 		if err = emit(0, 0, ps, first); err != nil {

@@ -11,9 +11,9 @@ import (
 	"sync"
 )
 
-// genome is one candidate next state. fit = H_spatial + H_frequency,
+// genome is one candidate next state. fit is H_frequency / H_spatial,
 // and lower is better. Crossover swaps whole spatial or phase genes; it
-// does not average coordinates, so a lower entropy has to be selected
+// does not average coordinates, so a better ratio has to be selected
 // rather than manufactured by blending particles together.
 type genome struct {
 	particles []Particle
@@ -103,10 +103,7 @@ func evaluatePop(cfg Config, pop []genome) {
 					continue
 				}
 				hs, hf := ev.score(pop[i].particles)
-				fit := hs + hf
-				if math.IsNaN(fit) || math.IsInf(fit, 0) {
-					fit = math.Inf(1)
-				}
+				fit := fitness(hs, hf)
 				pop[i].hs = hs
 				pop[i].hf = hf
 				pop[i].fit = fit
@@ -118,7 +115,7 @@ func evaluatePop(cfg Config, pop []genome) {
 }
 
 // optimize searches around base for the candidate with the lowest
-// H_spatial + H_frequency. base itself is individual 0, so the result
+// H_frequency / H_spatial. base itself is individual 0, so the result
 // is never worse than that seed. Total momentum is restored to (px, py)
 // on every candidate.
 func optimize(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
@@ -157,4 +154,18 @@ func optimize(cfg Config, rng *randRand, base []Particle, px, py float64) (best 
 		pop = next
 	}
 	return pop[0].particles, pop[0].hs, pop[0].hf
+}
+
+// fitness is H_frequency / H_spatial. Minimizing it lowers spectral
+// entropy and raises spatial entropy. A non-positive spatial entropy
+// cannot be improved further, so it scores +Inf.
+func fitness(hs, hf float64) float64 {
+	if hs <= 0 || math.IsNaN(hs) || math.IsNaN(hf) {
+		return math.Inf(1)
+	}
+	fit := hf / hs
+	if math.IsNaN(fit) || math.IsInf(fit, 0) {
+		return math.Inf(1)
+	}
+	return fit
 }

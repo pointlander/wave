@@ -6,8 +6,7 @@
 // wave packets. Each packet has a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. A genetic algorithm
 // then searches around that proposal and keeps the candidate with the
-// lowest sum of Shannon entropies of the position density |Ψ|² and the
-// spectral power |Ψ̂|².
+// lowest H_frequency / H_spatial.
 package main
 
 import (
@@ -56,7 +55,7 @@ func run() (err error) {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of wave packets. Each step is a\n")
-		fmt.Fprintf(os.Stderr, "genetic search for the lowest spatial plus spectral entropy\n")
+		fmt.Fprintf(os.Stderr, "genetic search for the lowest H_frequency / H_spatial\n")
 		fmt.Fprintf(os.Stderr, "in a neighborhood of the Newtonian proposal.\n\n")
 		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")
 		fmt.Fprintf(os.Stderr, "-out writes PNGs. -webm pipes those frames to ffmpeg as VP9.\n")
@@ -108,7 +107,7 @@ func run() (err error) {
 	var gain float64
 	steps, elapsed, first, last, err := simulate(cfg, rng, ps, time.Duration(runFor), func(step int, simTime float64, ps []Particle, res StepResult) error {
 		if step > 0 {
-			gain += res.HNewton - res.HJoint
+			gain += res.Newton - res.Fitness
 		}
 		printRow(step, simTime, res)
 		return writeOutputs(outDir, csvW, enc, cfg, ps, step, simTime, res)
@@ -127,12 +126,12 @@ func run() (err error) {
 			return err
 		}
 	}
-	fmt.Printf("\njoint entropy %.4f -> %.4f\n", first.HJoint, last.HJoint)
+	fmt.Printf("\nfitness %.4f -> %.4f\n", first.Fitness, last.Fitness)
 	fmt.Printf("spatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
 		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
-		fmt.Printf("mean entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
+		fmt.Printf("mean fitness improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 	}
 	if runFor > 0 {
 		fmt.Printf("ran %d steps in %.3fs\n", steps, elapsed.Seconds())
@@ -174,19 +173,19 @@ func (d *durationFlag) Set(s string) error {
 
 func traceHeader() []string {
 	return []string{
-		"step", "time", "h_spatial", "h_frequency", "h_joint", "h_newton",
+		"step", "time", "h_spatial", "h_frequency", "fitness", "newton",
 		"separation", "kinetic", "potential",
 	}
 }
 
 func printHeader() {
 	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %9s %10s\n",
-		"step", "time", "H_space", "H_freq", "H_joint", "H_newton", "sep", "kinetic", "potential")
+		"step", "time", "H_space", "H_freq", "Hf/Hs", "newton", "sep", "kinetic", "potential")
 }
 
 func printRow(step int, time float64, r StepResult) {
 	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.4f %9.4f %10.4f\n",
-		step, time, r.HSpatial, r.HFrequency, r.HJoint, r.HNewton, r.Separation, r.Kinetic, r.Potential)
+		step, time, r.HSpatial, r.HFrequency, r.Fitness, r.Newton, r.Separation, r.Kinetic, r.Potential)
 }
 
 func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps []Particle, step int, time float64, r StepResult) error {
@@ -199,8 +198,8 @@ func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps 
 			strconv.FormatFloat(time, 'f', 6, 64),
 			strconv.FormatFloat(r.HSpatial, 'f', 6, 64),
 			strconv.FormatFloat(r.HFrequency, 'f', 6, 64),
-			strconv.FormatFloat(r.HJoint, 'f', 6, 64),
-			strconv.FormatFloat(r.HNewton, 'f', 6, 64),
+			strconv.FormatFloat(r.Fitness, 'f', 6, 64),
+			strconv.FormatFloat(r.Newton, 'f', 6, 64),
 			strconv.FormatFloat(r.Separation, 'f', 6, 64),
 			strconv.FormatFloat(r.Kinetic, 'f', 6, 64),
 			strconv.FormatFloat(r.Potential, 'f', 6, 64),

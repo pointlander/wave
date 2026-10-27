@@ -191,8 +191,20 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 	if ths >= ahs {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
 	}
-	if ths+thf >= ahs+ahf {
-		t.Fatalf("joint entropy together %v, apart %v", ths+thf, ahs+ahf)
+	if fitness(ahs, ahf) >= fitness(ths, thf) {
+		t.Fatalf("spread fitness %v, coincident fitness %v", fitness(ahs, ahf), fitness(ths, thf))
+	}
+}
+
+func TestFitnessRatio(t *testing.T) {
+	if got := fitness(0.4, 0.2); math.Abs(got-0.5) > 1e-12 {
+		t.Fatalf("fitness = %v", got)
+	}
+	if !math.IsInf(fitness(0, 0.3), 1) {
+		t.Fatal("zero spatial entropy should be the worst fitness")
+	}
+	if !math.IsInf(fitness(0, 0), 1) {
+		t.Fatal("zero entropies should be the worst fitness")
 	}
 }
 
@@ -209,10 +221,10 @@ func TestSelectionDoesNotExceedNewton(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.HJoint > res.HNewton+1e-9 {
-			t.Fatalf("step %d joint %v exceeds newton %v", step, res.HJoint, res.HNewton)
+		if res.Fitness > res.Newton+1e-9 {
+			t.Fatalf("step %d fitness %v exceeds newton %v", step, res.Fitness, res.Newton)
 		}
-		if math.IsNaN(res.HJoint) || math.IsNaN(res.Kinetic) || math.IsNaN(res.Potential) {
+		if math.IsNaN(res.Fitness) || math.IsNaN(res.Kinetic) || math.IsNaN(res.Potential) {
 			t.Fatalf("step %d produced NaN: %+v", step, res)
 		}
 		px, py := momentum(next)

@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of Gaussian wave packets. Each particle has a spatial representation and its Fourier dual. Gravity proposes the next state. A genetic search around that proposal keeps the candidate with the lowest sum of spatial and spectral entropy.
+A two-dimensional n-body simulation of Gaussian wave packets. Each particle has a spatial representation and its Fourier dual. Gravity proposes the next state. A genetic search around that proposal keeps the candidate with the lowest frequency entropy divided by spatial entropy.
 
 ## Model
 
@@ -17,7 +17,7 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 - spatial entropy of the density `|Ψ|²`
 - frequency entropy of the power spectrum `|Ψ̂|²`
 
-The fitness of a candidate is the sum. Lower is better. The Newtonian step is always in the population, so the accepted state is never worse than that proposal. Crossover swaps position, velocity, or phase genes. It does not average coordinates.
+The fitness of a candidate is `H_frequency / H_spatial`. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad. The Newtonian step is always in the population, so the accepted state is never worse than that proposal. Crossover swaps position, velocity, or phase genes. It does not average coordinates.
 
 The initial condition is a rotating disk of equal masses with random phases.
 
@@ -30,7 +30,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their sum, the Newtonian proposal's joint entropy, mean separation, kinetic energy, and potential energy.
+A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation, kinetic energy, and potential energy.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 
