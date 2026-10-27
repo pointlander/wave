@@ -143,7 +143,7 @@ func Initialize(cfg Config, rng *randRand) ([]Particle, error) {
 			}
 		}
 		r := math.Hypot(x, y)
-		menc := float64(cfg.N) * (r * r) / (R * R)
+		menc := float64(cfg.N) * cfg.Mass * (r * r) / (R * R)
 		speed := circularSpeed(cfg, r, menc)
 		tx, ty := 0.0, 0.0
 		if r > 1e-8 {
@@ -154,7 +154,7 @@ func Initialize(cfg Config, rng *randRand) ([]Particle, error) {
 			Y:     wrap(cy+y, cfg.L),
 			VX:    speed*tx + 0.05*speed*rng.NormFloat64(),
 			VY:    speed*ty + 0.05*speed*rng.NormFloat64(),
-			Mass:  1,
+			Mass:  cfg.Mass,
 			Sigma: cfg.Sigma,
 		}
 		ps[i].F.Phase = rng.Float64() * 2 * math.Pi

@@ -20,8 +20,9 @@ type randRand = randv2.Rand
 type Config struct {
 	N          int
 	Grid       int
-	L          float64
-	DT         float64
+	L          float64 // kpc
+	Mass       float64 // M_sun
+	DT         float64 // kpc/(km/s)
 	Steps      int
 	PopSize    int
 	Gens       int
@@ -38,27 +39,58 @@ type Config struct {
 	Seed       int64
 }
 
-// DefaultConfig returns a short run that keeps a rotating disk of wave
-// packets inside a periodic unit box.
+const (
+	// newtonG is Newton's gravitational constant in kpc M_sun^-1 (km/s)^2.
+	newtonG = 4.3009172706e-6
+	// gyrPerKpcOverKms converts the integrator time unit, kpc/(km/s), to Gyr.
+	gyrPerKpcOverKms = 0.9777922216809356
+
+	galaxyMass = 1e12 // M_sun, Milky-Way-scale halo
+	boxKpc     = 3000 // 3 Mpc periodic cell
+
+	// The dimensionless model below was tuned for a stable search. Lengths
+	// scale by boxKpc and velocities by velocityScale, which is the factor
+	// that makes modelG correspond to newtonG at galaxyMass.
+	modelG        = 0.008
+	modelDT       = 0.02
+	modelHbar     = 0.01
+	modelSigma    = 0.04
+	modelSoft     = 0.02
+	modelRadius   = 0.18
+	modelMutPos   = 0.01
+	modelMutVel   = 0.02
+	modelMutPhase = 0.2
+)
+
+// velocityScale is the factor from the dimensionless velocity to km/s.
+func velocityScale() float64 {
+	return math.Sqrt(newtonG * galaxyMass / (boxKpc * modelG))
+}
+
+// DefaultConfig returns a group of galaxies in a 3 Mpc box.
+// Lengths are kpc, masses are solar masses, velocities are km/s, and the
+// integrator time step is in kpc/(km/s). Displayed time is Gyr.
 func DefaultConfig() Config {
+	v := velocityScale()
 	return Config{
 		N:          12,
 		Grid:       64,
-		L:          1,
-		DT:         0.02,
+		L:          boxKpc,
+		Mass:       galaxyMass,
+		DT:         modelDT * boxKpc / v,
 		Steps:      24,
 		PopSize:    24,
 		Gens:       5,
 		Elite:      2,
 		Tournament: 3,
-		Gravity:    0.008,
-		Softening:  0.02,
-		Hbar:       0.01,
-		Sigma:      0.04,
-		Radius:     0.18,
-		MutPos:     0.01,
-		MutVel:     0.02,
-		MutPhase:   0.2,
+		Gravity:    newtonG,
+		Softening:  modelSoft * boxKpc,
+		Hbar:       modelHbar * boxKpc * v,
+		Sigma:      modelSigma * boxKpc,
+		Radius:     modelRadius * boxKpc,
+		MutPos:     modelMutPos * boxKpc,
+		MutVel:     modelMutVel * v,
+		MutPhase:   modelMutPhase,
 		Seed:       1,
 	}
 }
@@ -73,6 +105,9 @@ func (c Config) Validate() error {
 	}
 	if c.L <= 0 {
 		return fmt.Errorf("box length must be positive")
+	}
+	if c.Mass <= 0 {
+		return fmt.Errorf("mass must be positive")
 	}
 	if c.DT <= 0 {
 		return fmt.Errorf("dt must be positive")

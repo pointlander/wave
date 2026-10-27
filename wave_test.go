@@ -18,14 +18,27 @@ import (
 )
 
 func testConfig() Config {
-	cfg := DefaultConfig()
-	cfg.N = 8
-	cfg.Grid = 32
-	cfg.PopSize = 10
-	cfg.Gens = 3
-	cfg.Steps = 3
-	cfg.Seed = 1
-	return cfg
+	return Config{
+		N:          8,
+		Grid:       32,
+		L:          1,
+		Mass:       1,
+		DT:         0.02,
+		Steps:      3,
+		PopSize:    10,
+		Gens:       3,
+		Elite:      2,
+		Tournament: 3,
+		Gravity:    0.008,
+		Softening:  0.02,
+		Hbar:       0.01,
+		Sigma:      0.04,
+		Radius:     0.18,
+		MutPos:     0.01,
+		MutVel:     0.02,
+		MutPhase:   0.2,
+		Seed:       1,
+	}
 }
 
 func TestValidate(t *testing.T) {
@@ -89,8 +102,32 @@ func TestFFTRoundtripAndDelta(t *testing.T) {
 	}
 }
 
-func TestGravityPullsAcrossPairAndBoundary(t *testing.T) {
+func TestGalacticScale(t *testing.T) {
 	cfg := DefaultConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mass != 1e12 || cfg.L != 3000 {
+		t.Fatalf("mass %v box %v", cfg.Mass, cfg.L)
+	}
+	if math.Abs(cfg.Gravity-newtonG) > 1e-18 {
+		t.Fatalf("G = %v", cfg.Gravity)
+	}
+	v := circularSpeed(cfg, cfg.Radius, float64(cfg.N)*cfg.Mass)
+	if v < 200 || v > 500 {
+		t.Fatalf("group edge speed %v km/s", v)
+	}
+	if cfg.Sigma < 50 || cfg.Sigma > 300 {
+		t.Fatalf("galaxy width %v kpc", cfg.Sigma)
+	}
+	dtGyr := cfg.DT * gyrPerKpcOverKms
+	if dtGyr < 0.05 || dtGyr > 0.5 {
+		t.Fatalf("dt %v Gyr", dtGyr)
+	}
+}
+
+func TestGravityPullsAcrossPairAndBoundary(t *testing.T) {
+	cfg := testConfig()
 	ps := []Particle{
 		{S: Spatial{X: 0.4, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}},
 		{S: Spatial{X: 0.6, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}},
@@ -136,8 +173,9 @@ func TestMomentumOfForcesVanishes(t *testing.T) {
 }
 
 func TestSpectrumPeaksAtWavevector(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := testConfig()
 	cfg.Grid = 64
+	cfg.L = 1
 	cfg.Hbar = 0.01
 	binX, binY := 5, -3
 	kx := 2 * math.Pi * float64(binX) / cfg.L
@@ -174,8 +212,9 @@ func torusDist(a, b, n int) int {
 }
 
 func TestCoherentClusterHasLowerEntropy(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := testConfig()
 	cfg.Grid = 64
+	cfg.L = 1
 	cfg.Hbar = 0.01
 	packet := func(x, y float64) Particle {
 		p := Particle{S: Spatial{

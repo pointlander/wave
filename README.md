@@ -1,12 +1,30 @@
 # wave
 
-A two-dimensional n-body simulation of Gaussian wave packets. Each particle has a spatial representation and its Fourier dual. Gravity proposes the next state. A genetic search around that proposal keeps the candidate with the lowest frequency entropy divided by spatial entropy.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. A genetic search around that proposal keeps the candidate with the lowest frequency entropy divided by spatial entropy.
+
+## Units
+
+The default run is a group of 12 Milky Way-scale halos in a periodic 3 Mpc cell. Newton's constant is
+
+`G = 4.3009172706×10⁻⁶ kpc M_sun⁻¹ (km/s)²`.
+
+| Quantity | Unit | Default |
+| --- | --- | --- |
+| length | kpc | box 3000, group radius 540 |
+| mass | M_sun | 1×10¹² per galaxy |
+| velocity | km/s | about 310 at the group edge |
+| time | Gyr | step 0.139, 24 steps span 3.33 |
+| packet width `σ` | kpc | 120 |
+| Plummer softening | kpc | 60 |
+| energy | M_sun (km/s)² | |
+
+These values are the original stable search scaled onto that box. The velocity scale is the one that makes the tuned force law match Newton's `G` at 10¹² solar masses. The carrier scale `ħ` is about 1.27×10⁴ kpc km/s, so `K = V / ħ` has the same number of radians across the box as that tuned model. It is not the quantum constant.
 
 ## Model
 
-Particles live in a periodic unit box. Gravity is Plummer-softened Newtonian gravity in the plane, integrated with velocity Verlet. Total momentum is held fixed.
+Galaxies live in a periodic box. Gravity is Plummer-softened Newtonian gravity in the plane, integrated with velocity Verlet. Total momentum is held fixed. The integrator advances positions in kpc and velocities in km/s, so its internal time step is kpc/(km/s); the table converts that to Gyr.
 
-Each packet is a Gaussian envelope of width `σ` centered at `(X, Y)`, moving with velocity `V`. Its frequency representation is the matching Gaussian in wavevector space:
+Each galaxy is a Gaussian envelope of width `σ` centered at `(X, Y)`, moving with velocity `V`. Its frequency representation is the matching Gaussian in wavevector space:
 
 - carrier `K = V / ħ`
 - spectral width `σ_k = 1 / (2σ)`
@@ -19,7 +37,7 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 
 The fitness of a candidate is `H_frequency / H_spatial`. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad. The Newtonian step is always in the population, so the accepted state is never worse than that proposal. Crossover swaps position, velocity, or phase genes. It does not average coordinates.
 
-The initial condition is a rotating disk of equal masses with random phases.
+The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
 ## Build and run
 
@@ -30,7 +48,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation, kinetic energy, and potential energy. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
+A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 
@@ -50,23 +68,25 @@ go run . -duration 30s -webm wave.webm -out frames
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-n` | 12 | particle count |
+| `-n` | 12 | number of galaxies |
+| `-mass` | 1e12 | galaxy mass in solar masses |
+| `-box` | 3000 | periodic box length in kpc |
 | `-steps` | 24 | steps after the initial state, used when `-duration` is 0 |
 | `-duration` | 0 | wall-clock limit; overrides `-steps` |
-| `-dt` | 0.02 | Newtonian time step |
+| `-dt` | 0.139 | Newtonian time step in Gyr |
 | `-grid` | 64 | field size, a power of two |
 | `-pop` | 24 | genetic population size |
 | `-gens` | 5 | generations per step |
 | `-elite` | 2 | elite genomes kept each generation |
 | `-seed` | 1 | random seed |
-| `-gravity` | 0.008 | gravitational constant |
-| `-softening` | 0.02 | Plummer softening length |
-| `-hbar` | 0.01 | de Broglie scale, `K = V / ħ` |
-| `-sigma` | 0.04 | packet width |
-| `-radius` | 0.18 | initial disk radius |
-| `-mutpos` | 0.01 | position mutation scale |
-| `-mutvel` | 0.02 | velocity mutation scale |
-| `-mutphase` | 0.2 | phase mutation scale |
+| `-gravity` | 4.301e-6 | `G` in kpc M_sun⁻¹ (km/s)² |
+| `-softening` | 60 | Plummer softening length in kpc |
+| `-hbar` | 1.270e4 | carrier scale in kpc km/s, `K = V / ħ` |
+| `-sigma` | 120 | packet width in kpc |
+| `-radius` | 540 | initial group radius in kpc |
+| `-mutpos` | 30 | position mutation scale in kpc |
+| `-mutvel` | 8.47 | velocity mutation scale in km/s |
+| `-mutphase` | 0.2 | phase mutation scale in radians |
 | `-out` | | directory for PNG frames and `trace.csv` |
 | `-webm` | | path of a VP9 WebM written by ffmpeg |
 | `-fps` | 12 | WebM frame rate |
