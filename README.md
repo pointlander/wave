@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. A genetic search around that proposal keeps the candidate with the lowest frequency entropy divided by spatial entropy.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the state with the lowest frequency entropy divided by spatial entropy.
 
 ## Units
 
@@ -35,7 +35,11 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 - spatial entropy of the density `|Ψ|²`
 - frequency entropy of the power spectrum `|Ψ̂|²`
 
-The fitness of a candidate is `H_frequency / H_spatial`. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad. The Newtonian step is always in the population, so the accepted state is never worse than that proposal. Crossover swaps position, velocity, or phase genes. It does not average coordinates.
+From the first integrated step on, each entropy is the equal-weight mixture of the candidate with the previous two accepted steps. The initial frame is scored on its own. Fewer than two earlier steps use the steps that exist.
+
+The fitness of a candidate is `H_frequency / H_spatial`. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad.
+
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest ratio it reached. The step accepts the lowest-ratio state evaluated, and the Newtonian proposal is one of those states.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
@@ -48,7 +52,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
+A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. After step 0 those entropies and ratios use the mixture with the previous two accepted steps. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 
@@ -75,9 +79,10 @@ go run . -duration 30s -webm wave.webm -out frames
 | `-duration` | 0 | wall-clock limit; overrides `-steps` |
 | `-dt` | 0.139 | Newtonian time step in Gyr |
 | `-grid` | 64 | field size, a power of two |
-| `-pop` | 24 | genetic population size |
-| `-gens` | 5 | generations per step |
-| `-elite` | 2 | elite genomes kept each generation |
+| `-iters` | 48 | Monte Carlo iterations per step |
+| `-widen` | 1 | progressive widening coefficient |
+| `-explore` | 0.15 | UCB exploration constant |
+| `-rollout` | 1 | rollout mutations after each new node |
 | `-seed` | 1 | random seed |
 | `-gravity` | 4.301e-6 | `G` in kpc M_sun⁻¹ (km/s)² |
 | `-softening` | 60 | Plummer softening length in kpc |

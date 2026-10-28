@@ -16,7 +16,7 @@ import (
 // call sites short and the generator swappable in tests.
 type randRand = randv2.Rand
 
-// Config holds the box, the n-body integrator, and the genetic search.
+// Config holds the box, the n-body integrator, and the Monte Carlo search.
 type Config struct {
 	N          int
 	Grid       int
@@ -24,10 +24,10 @@ type Config struct {
 	Mass       float64 // M_sun
 	DT         float64 // kpc/(km/s)
 	Steps      int
-	PopSize    int
-	Gens       int
-	Elite      int
-	Tournament int
+	Iterations int     // MCTS iterations per step
+	Widen      float64 // progressive-widening coefficient
+	Explore    float64 // UCB exploration constant
+	Rollout    int     // mutations evaluated past each new child
 	Gravity    float64
 	Softening  float64
 	Hbar       float64
@@ -79,10 +79,10 @@ func DefaultConfig() Config {
 		Mass:       galaxyMass,
 		DT:         modelDT * boxKpc / v,
 		Steps:      24,
-		PopSize:    24,
-		Gens:       5,
-		Elite:      2,
-		Tournament: 3,
+		Iterations: 48,
+		Widen:      1,
+		Explore:    0.15,
+		Rollout:    1,
 		Gravity:    newtonG,
 		Softening:  modelSoft * boxKpc,
 		Hbar:       modelHbar * boxKpc * v,
@@ -115,17 +115,17 @@ func (c Config) Validate() error {
 	if c.Steps < 0 {
 		return fmt.Errorf("steps must be non-negative")
 	}
-	if c.PopSize < 2 {
-		return fmt.Errorf("population must be at least 2")
+	if c.Iterations < 0 {
+		return fmt.Errorf("iterations must be non-negative")
 	}
-	if c.Gens < 1 {
-		return fmt.Errorf("generations must be at least 1")
+	if c.Widen <= 0 {
+		return fmt.Errorf("widen must be positive")
 	}
-	if c.Elite < 1 || c.Elite >= c.PopSize {
-		return fmt.Errorf("elite must be in [1, pop)")
+	if c.Explore < 0 {
+		return fmt.Errorf("explore must be non-negative")
 	}
-	if c.Tournament < 1 {
-		return fmt.Errorf("tournament size must be at least 1")
+	if c.Rollout < 0 {
+		return fmt.Errorf("rollout must be non-negative")
 	}
 	if c.Gravity < 0 {
 		return fmt.Errorf("gravity must be non-negative")
@@ -148,10 +148,11 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// StepResult is one accepted state, plus the Newtonian proposal's fitness
-// so the genetic improvement is visible. Fitness is H_frequency / H_spatial.
-// Agree is true when the accepted state matches the Newtonian proposal.
-// AgreeCount and AgreeRate accumulate that comparison over the run.
+// StepResult is one accepted state, plus the Newtonian proposal's fitness.
+// Fitness is the windowed H_frequency / H_spatial: the current state mixed
+// equally with the previous two accepted steps. Agree is true when the
+// accepted state matches the Newtonian proposal. AgreeCount and AgreeRate
+// accumulate that comparison over the run.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
@@ -183,10 +184,10 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	}, nil
 }
 
-// Step seeds a genetic search with a Newtonian proposal and accepts the
-// candidate with the lowest H_frequency / H_spatial. Momentum is held
-// at the value of ps.
-func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
+// Step roots a Monte Carlo tree search at a Newtonian proposal.
+// history is the earlier accepted states, oldest first; only the last
+// two enter the entropy. Momentum is held at the value of ps.
+func Step(cfg Config, rng *randRand, history [][]Particle, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, StepResult{}, err
 	}
@@ -196,8 +197,9 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 	for i := range proposal {
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
-	nHs, nHf := measure(cfg, proposal)
-	best, hs, hf := optimize(cfg, rng, proposal, px, py)
+	window := newEntropyWindow(cfg, history)
+	nHs, nHf := measureWindow(cfg, proposal, window)
+	best, hs, hf := search(cfg, rng, proposal, px, py, window)
 	kin, pot := energies(cfg, best)
 	res := StepResult{
 		HSpatial:   hs,
@@ -270,6 +272,7 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 	start := time.Now()
 	simTime := 0.0
 	agreed := 0
+	history := [][]Particle{cloneParticles(ps)}
 	for {
 		if duration > 0 {
 			if time.Since(start) >= duration {
@@ -279,9 +282,13 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 			break
 		}
 		var res StepResult
-		ps, res, err = Step(cfg, rng, ps)
+		ps, res, err = Step(cfg, rng, history, ps)
 		if err != nil {
 			return steps, time.Since(start), first, last, err
+		}
+		history = append(history, cloneParticles(ps))
+		if len(history) > entropyHistory {
+			history = history[len(history)-entropyHistory:]
 		}
 		steps++
 		if res.Agree {

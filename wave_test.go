@@ -25,10 +25,10 @@ func testConfig() Config {
 		Mass:       1,
 		DT:         0.02,
 		Steps:      3,
-		PopSize:    10,
-		Gens:       3,
-		Elite:      2,
-		Tournament: 3,
+		Iterations: 8,
+		Widen:      1,
+		Explore:    0.15,
+		Rollout:    1,
 		Gravity:    0.008,
 		Softening:  0.02,
 		Hbar:       0.01,
@@ -299,8 +299,10 @@ func TestSelectionDoesNotExceedNewton(t *testing.T) {
 		t.Fatal(err)
 	}
 	px0, py0 := momentum(ps)
+	history := [][]Particle{cloneParticles(ps)}
 	for step := 0; step < cfg.Steps; step++ {
-		next, res, err := Step(cfg, rng, ps)
+		window := newEntropyWindow(cfg, history)
+		next, res, err := Step(cfg, rng, history, ps)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,11 +316,108 @@ func TestSelectionDoesNotExceedNewton(t *testing.T) {
 		if math.Abs(px-px0) > 1e-8 || math.Abs(py-py0) > 1e-8 {
 			t.Fatalf("momentum drifted to %v %v", px, py)
 		}
-		againS, againF := measure(cfg, next)
+		againS, againF := measureWindow(cfg, next, window)
 		if math.Abs(againS-res.HSpatial) > 1e-9 || math.Abs(againF-res.HFrequency) > 1e-9 {
 			t.Fatalf("rescored entropy %v %v, recorded %v %v", againS, againF, res.HSpatial, res.HFrequency)
 		}
+		history = append(history, cloneParticles(next))
+		if len(history) > entropyHistory {
+			history = history[len(history)-entropyHistory:]
+		}
 		ps = next
+	}
+}
+
+func TestEntropyWindowMixesPriors(t *testing.T) {
+	cfg := testConfig()
+	packet := func(x float64) Particle {
+		p := Particle{S: Spatial{X: x, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
+		p.SyncFrequency(cfg.Hbar)
+		return p
+	}
+	a := []Particle{packet(0.25)}
+	b := []Particle{packet(0.75)}
+	c := []Particle{packet(0.50)}
+
+	singleS, singleF := measure(cfg, a)
+	same := newEntropyWindow(cfg, [][]Particle{a, a})
+	hs, hf := measureWindow(cfg, a, same)
+	if math.Abs(hs-singleS) > 1e-9 || math.Abs(hf-singleF) > 1e-9 {
+		t.Fatalf("identical window %v %v, single %v %v", hs, hf, singleS, singleF)
+	}
+	noneS, noneF := measureWindow(cfg, a, nil)
+	if math.Abs(noneS-singleS) > 1e-12 || math.Abs(noneF-singleF) > 1e-12 {
+		t.Fatalf("empty window %v %v, single %v %v", noneS, noneF, singleS, singleF)
+	}
+
+	mixed := newEntropyWindow(cfg, [][]Particle{b})
+	mixedS, _ := measureWindow(cfg, a, mixed)
+	if mixedS <= singleS+1e-4 {
+		t.Fatalf("mixed spatial %v, single %v", mixedS, singleS)
+	}
+
+	lastTwo := newEntropyWindow(cfg, [][]Particle{b, b})
+	capped := newEntropyWindow(cfg, [][]Particle{c, b, b})
+	ls, lf := measureWindow(cfg, a, lastTwo)
+	cs, cf := measureWindow(cfg, a, capped)
+	if math.Abs(ls-cs) > 1e-9 || math.Abs(lf-cf) > 1e-9 {
+		t.Fatalf("history cap %v %v, last two %v %v", cs, cf, ls, lf)
+	}
+}
+
+func TestStepReportsWindowedEntropy(t *testing.T) {
+	cfg := testConfig()
+	cfg.Iterations = 0
+	cfg.Gravity = 0
+	packet := func(x float64) Particle {
+		p := Particle{S: Spatial{X: x, Y: 0.5, Mass: 1, Sigma: cfg.Sigma, VX: 0, VY: 0}}
+		p.SyncFrequency(cfg.Hbar)
+		return p
+	}
+	cur := []Particle{packet(0.2)}
+	prior := []Particle{packet(0.8)}
+	history := [][]Particle{prior}
+	next, res, err := Step(cfg, newRNG(1), history, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := newEntropyWindow(cfg, history)
+	hs, hf := measureWindow(cfg, next, window)
+	if math.Abs(hs-res.HSpatial) > 1e-9 || math.Abs(hf-res.HFrequency) > 1e-9 {
+		t.Fatalf("window %v %v, recorded %v %v", hs, hf, res.HSpatial, res.HFrequency)
+	}
+	singleS, singleF := measure(cfg, next)
+	if math.Abs(singleS-res.HSpatial) < 1e-6 && math.Abs(singleF-res.HFrequency) < 1e-6 {
+		t.Fatal("windowed entropy matched the current frame alone")
+	}
+	if !res.Agree {
+		t.Fatal("zero-iteration step left the Newtonian proposal")
+	}
+}
+
+func TestMCTSSelection(t *testing.T) {
+	if maxChildren(1, 1) != 1 || maxChildren(1, 4) != 2 || maxChildren(1, 9) != 3 {
+		t.Fatalf("widening 1,4,9 -> %d %d %d", maxChildren(1, 1), maxChildren(1, 4), maxChildren(1, 9))
+	}
+	cfg := testConfig()
+	parent := &mctsNode{visits: 20}
+	good := &mctsNode{visits: 5, mean: 0.5}
+	bad := &mctsNode{visits: 5, mean: 0.9}
+	parent.children = []*mctsNode{bad, good}
+	if selectChild(cfg, parent) != good {
+		t.Fatal("ucb did not select the lower mean")
+	}
+	parent.children = []*mctsNode{{visits: 5, mean: math.Inf(1)}, good}
+	if selectChild(cfg, parent) != good {
+		t.Fatal("ucb preferred a non-finite mean")
+	}
+	cfg.Explore = 1
+	parent.visits = 30
+	rare := &mctsNode{visits: 1, mean: 0.55}
+	common := &mctsNode{visits: 20, mean: 0.4}
+	parent.children = []*mctsNode{common, rare}
+	if selectChild(cfg, parent) != rare {
+		t.Fatal("ucb did not explore the rare child")
 	}
 }
 
@@ -401,9 +500,8 @@ func TestSimulateHonorsDuration(t *testing.T) {
 	cfg := testConfig()
 	cfg.N = 4
 	cfg.Grid = 16
-	cfg.PopSize = 4
-	cfg.Gens = 1
-	cfg.Elite = 1
+	cfg.Iterations = 2
+	cfg.Rollout = 0
 	cfg.Steps = 1_000_000
 	ps, err := Initialize(cfg, newRNG(1))
 	if err != nil {

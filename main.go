@@ -4,9 +4,9 @@
 
 // Command wave simulates a two-dimensional group of galaxies. Each galaxy
 // is a Gaussian wave packet with a spatial representation and its Fourier
-// dual. A Newtonian step proposes the next state. A genetic algorithm
-// then searches around that proposal and keeps the candidate with the
-// lowest H_frequency / H_spatial.
+// dual. A Newtonian step proposes the next state. Monte Carlo tree search
+// then searches around that proposal for the lowest H_frequency / H_spatial,
+// with each entropy taken over the candidate and the previous two steps.
 package main
 
 import (
@@ -39,9 +39,10 @@ func run() (err error) {
 	flag.Float64Var(&cfg.L, "box", cfg.L, "periodic box length in kpc")
 	flag.Float64Var(&cfg.Mass, "mass", cfg.Mass, "galaxy mass in solar masses")
 	flag.IntVar(&cfg.Grid, "grid", cfg.Grid, "field grid size, a power of two")
-	flag.IntVar(&cfg.PopSize, "pop", cfg.PopSize, "genetic population size")
-	flag.IntVar(&cfg.Gens, "gens", cfg.Gens, "generations per time step")
-	flag.IntVar(&cfg.Elite, "elite", cfg.Elite, "elite genomes kept each generation")
+	flag.IntVar(&cfg.Iterations, "iters", cfg.Iterations, "Monte Carlo tree search iterations per step")
+	flag.Float64Var(&cfg.Widen, "widen", cfg.Widen, "progressive widening coefficient")
+	flag.Float64Var(&cfg.Explore, "explore", cfg.Explore, "UCB exploration constant")
+	flag.IntVar(&cfg.Rollout, "rollout", cfg.Rollout, "rollout mutations after each new tree node")
 	flag.Int64Var(&cfg.Seed, "seed", cfg.Seed, "random seed")
 	flag.Float64Var(&cfg.Gravity, "gravity", cfg.Gravity, "gravitational constant in kpc M_sun^-1 (km/s)^2")
 	flag.Float64Var(&cfg.Softening, "softening", cfg.Softening, "Plummer softening length in kpc")
@@ -58,8 +59,9 @@ func run() (err error) {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
-		fmt.Fprintf(os.Stderr, "genetic search for the lowest H_frequency / H_spatial\n")
-		fmt.Fprintf(os.Stderr, "in a neighborhood of the Newtonian proposal.\n\n")
+		fmt.Fprintf(os.Stderr, "Monte Carlo tree search for the lowest H_frequency / H_spatial\n")
+		fmt.Fprintf(os.Stderr, "around the Newtonian proposal. Entropy mixes the candidate\n")
+		fmt.Fprintf(os.Stderr, "with the previous two accepted steps.\n\n")
 		fmt.Fprintf(os.Stderr, "Lengths are kpc, masses are solar masses, velocities are km/s,\n")
 		fmt.Fprintf(os.Stderr, "and displayed time is Gyr. Energy is M_sun (km/s)^2.\n\n")
 		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")
