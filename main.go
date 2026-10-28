@@ -5,8 +5,8 @@
 // Command wave simulates a two-dimensional group of galaxies. Each galaxy
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
-// then searches around that proposal for the lowest H_frequency / H_spatial,
-// with each entropy taken over the candidate and the previous two steps.
+// then searches around that proposal. Frames that share the lowest
+// H_frequency / H_spatial are merged by the inverse of that ratio.
 package main
 
 import (
@@ -59,9 +59,9 @@ func run() (err error) {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
-		fmt.Fprintf(os.Stderr, "Monte Carlo tree search for the lowest H_frequency / H_spatial\n")
-		fmt.Fprintf(os.Stderr, "around the Newtonian proposal. Entropy mixes the candidate\n")
-		fmt.Fprintf(os.Stderr, "with the previous two accepted steps.\n\n")
+		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
+		fmt.Fprintf(os.Stderr, "Frames that share the lowest H_frequency / H_spatial are merged\n")
+		fmt.Fprintf(os.Stderr, "by the inverse of that ratio. A worse frame is left out.\n\n")
 		fmt.Fprintf(os.Stderr, "Lengths are kpc, masses are solar masses, velocities are km/s,\n")
 		fmt.Fprintf(os.Stderr, "and displayed time is Gyr. Energy is M_sun (km/s)^2.\n\n")
 		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")

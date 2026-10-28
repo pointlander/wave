@@ -291,7 +291,7 @@ func TestNewtonianAgreesWhenMutationsAreOff(t *testing.T) {
 	}
 }
 
-func TestSelectionDoesNotExceedNewton(t *testing.T) {
+func TestMergedStepKeepsMomentumAndField(t *testing.T) {
 	cfg := testConfig()
 	rng := newRNG(cfg.Seed)
 	ps, err := Initialize(cfg, rng)
@@ -299,99 +299,72 @@ func TestSelectionDoesNotExceedNewton(t *testing.T) {
 		t.Fatal(err)
 	}
 	px0, py0 := momentum(ps)
-	history := [][]Particle{cloneParticles(ps)}
 	for step := 0; step < cfg.Steps; step++ {
-		window := newEntropyWindow(cfg, history)
-		next, res, err := Step(cfg, rng, history, ps)
+		next, res, err := Step(cfg, rng, ps)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Fitness > res.Newton+1e-9 {
-			t.Fatalf("step %d fitness %v exceeds newton %v", step, res.Fitness, res.Newton)
-		}
-		if math.IsNaN(res.Fitness) || math.IsNaN(res.Kinetic) || math.IsNaN(res.Potential) {
-			t.Fatalf("step %d produced NaN: %+v", step, res)
+		if math.IsNaN(res.Fitness) || math.IsInf(res.Fitness, 0) || math.IsNaN(res.Kinetic) || math.IsNaN(res.Potential) {
+			t.Fatalf("step %d produced a bad result: %+v", step, res)
 		}
 		px, py := momentum(next)
 		if math.Abs(px-px0) > 1e-8 || math.Abs(py-py0) > 1e-8 {
 			t.Fatalf("momentum drifted to %v %v", px, py)
 		}
-		againS, againF := measureWindow(cfg, next, window)
+		againS, againF := measure(cfg, next)
 		if math.Abs(againS-res.HSpatial) > 1e-9 || math.Abs(againF-res.HFrequency) > 1e-9 {
 			t.Fatalf("rescored entropy %v %v, recorded %v %v", againS, againF, res.HSpatial, res.HFrequency)
-		}
-		history = append(history, cloneParticles(next))
-		if len(history) > entropyHistory {
-			history = history[len(history)-entropyHistory:]
 		}
 		ps = next
 	}
 }
 
-func TestEntropyWindowMixesPriors(t *testing.T) {
+func TestMergeWeights(t *testing.T) {
 	cfg := testConfig()
-	packet := func(x float64) Particle {
-		p := Particle{S: Spatial{X: x, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
-		p.SyncFrequency(cfg.Hbar)
-		return p
+	cfg.L = 1
+	body := func(x0, x1, vx float64) []Particle {
+		return []Particle{
+			{S: Spatial{X: x0, Y: 0.5, VX: vx, Mass: 1, Sigma: cfg.Sigma}},
+			{S: Spatial{X: x1, Y: 0.5, VX: -vx, Mass: 1, Sigma: cfg.Sigma}},
+		}
 	}
-	a := []Particle{packet(0.25)}
-	b := []Particle{packet(0.75)}
-	c := []Particle{packet(0.50)}
+	best := body(0.32, 0.50, 0.25)
+	states := []scoredState{
+		{particles: body(0.20, 0.40, 0.10), fit: 1},
+		{particles: best, fit: 0.5},
+		{particles: body(0.90, 0.90, 5), fit: math.Inf(1)},
+	}
+	got := mergeStates(cfg, states, 0, 0)
+	if !mechanicsAgree(got, best, cfg.L) {
+		t.Fatalf("worse frames moved the best state to %v %v", got[0].S.X, got[0].S.VX)
+	}
+	px, py := momentum(got)
+	if math.Abs(px) > 1e-12 || math.Abs(py) > 1e-12 {
+		t.Fatalf("momentum %v %v", px, py)
+	}
+	tied := []scoredState{
+		{particles: body(0.20, 0.40, 0.10), fit: 0.5},
+		{particles: body(0.32, 0.50, 0.25), fit: 0.5},
+	}
+	blend := mergeStates(cfg, tied, 0, 0)
+	// Equal ratios: circular mean of 0.20 and 0.32, linear mean of the velocities.
+	if math.Abs(blend[0].S.X-0.26) > 1e-12 || math.Abs(blend[0].S.VX-0.175) > 1e-12 {
+		t.Fatalf("tied merge %v %v", blend[0].S.X, blend[0].S.VX)
+	}
 
-	singleS, singleF := measure(cfg, a)
-	same := newEntropyWindow(cfg, [][]Particle{a, a})
-	hs, hf := measureWindow(cfg, a, same)
-	if math.Abs(hs-singleS) > 1e-9 || math.Abs(hf-singleF) > 1e-9 {
-		t.Fatalf("identical window %v %v, single %v %v", hs, hf, singleS, singleF)
+	across := []scoredState{
+		{particles: body(0.05, 0.5, 0), fit: 1},
+		{particles: body(0.95, 0.5, 0), fit: 1},
 	}
-	noneS, noneF := measureWindow(cfg, a, nil)
-	if math.Abs(noneS-singleS) > 1e-12 || math.Abs(noneF-singleF) > 1e-12 {
-		t.Fatalf("empty window %v %v, single %v %v", noneS, noneF, singleS, singleF)
+	wrapped := mergeStates(cfg, across, 0, 0)
+	if wrapped[0].S.X > 0.02 && wrapped[0].S.X < 0.98 {
+		t.Fatalf("boundary mean landed in the interior: %v", wrapped[0].S.X)
 	}
 
-	mixed := newEntropyWindow(cfg, [][]Particle{b})
-	mixedS, _ := measureWindow(cfg, a, mixed)
-	if mixedS <= singleS+1e-4 {
-		t.Fatalf("mixed spatial %v, single %v", mixedS, singleS)
-	}
-
-	lastTwo := newEntropyWindow(cfg, [][]Particle{b, b})
-	capped := newEntropyWindow(cfg, [][]Particle{c, b, b})
-	ls, lf := measureWindow(cfg, a, lastTwo)
-	cs, cf := measureWindow(cfg, a, capped)
-	if math.Abs(ls-cs) > 1e-9 || math.Abs(lf-cf) > 1e-9 {
-		t.Fatalf("history cap %v %v, last two %v %v", cs, cf, ls, lf)
-	}
-}
-
-func TestStepReportsWindowedEntropy(t *testing.T) {
-	cfg := testConfig()
-	cfg.Iterations = 0
-	cfg.Gravity = 0
-	packet := func(x float64) Particle {
-		p := Particle{S: Spatial{X: x, Y: 0.5, Mass: 1, Sigma: cfg.Sigma, VX: 0, VY: 0}}
-		p.SyncFrequency(cfg.Hbar)
-		return p
-	}
-	cur := []Particle{packet(0.2)}
-	prior := []Particle{packet(0.8)}
-	history := [][]Particle{prior}
-	next, res, err := Step(cfg, newRNG(1), history, cur)
-	if err != nil {
-		t.Fatal(err)
-	}
-	window := newEntropyWindow(cfg, history)
-	hs, hf := measureWindow(cfg, next, window)
-	if math.Abs(hs-res.HSpatial) > 1e-9 || math.Abs(hf-res.HFrequency) > 1e-9 {
-		t.Fatalf("window %v %v, recorded %v %v", hs, hf, res.HSpatial, res.HFrequency)
-	}
-	singleS, singleF := measure(cfg, next)
-	if math.Abs(singleS-res.HSpatial) < 1e-6 && math.Abs(singleF-res.HFrequency) < 1e-6 {
-		t.Fatal("windowed entropy matched the current frame alone")
-	}
-	if !res.Agree {
-		t.Fatal("zero-iteration step left the Newtonian proposal")
+	perfect := append(states, scoredState{particles: body(0.80, 0.70, 0.3), fit: 0})
+	only := mergeStates(cfg, perfect, 0, 0)
+	if math.Abs(only[0].S.X-0.80) > 1e-9 || math.Abs(only[1].S.X-0.70) > 1e-9 {
+		t.Fatalf("zero ratio did not take the step: %v %v", only[0].S.X, only[1].S.X)
 	}
 }
 
@@ -429,7 +402,7 @@ func TestSearchExpandsOneExtraPly(t *testing.T) {
 	cfg.Gravity = 0
 	p := Particle{S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
 	p.SyncFrequency(cfg.Hbar)
-	root, _, _, _ := runMCTS(cfg, newRNG(1), []Particle{p}, 0, 0, nil)
+	root, _ := runMCTS(cfg, newRNG(1), []Particle{p}, 0, 0)
 	if len(root.children) != 1 {
 		t.Fatalf("root children = %d", len(root.children))
 	}

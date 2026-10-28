@@ -149,9 +149,8 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is the windowed H_frequency / H_spatial: the current state mixed
-// equally with the previous two accepted steps. Agree is true when the
-// accepted state matches the Newtonian proposal. AgreeCount and AgreeRate
+// Fitness is H_frequency / H_spatial of the merged frame. Agree is true
+// when that frame matches the Newtonian proposal. AgreeCount and AgreeRate
 // accumulate that comparison over the run.
 type StepResult struct {
 	HSpatial   float64
@@ -184,10 +183,11 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	}, nil
 }
 
-// Step roots a Monte Carlo tree search at a Newtonian proposal.
-// history is the earlier accepted states, oldest first; only the last
-// two enter the entropy. Momentum is held at the value of ps.
-func Step(cfg Config, rng *randRand, history [][]Particle, ps []Particle) ([]Particle, StepResult, error) {
+// Step roots a Monte Carlo tree search at a Newtonian proposal and merges
+// the frames that share the lowest entropy ratio. A worse frame does not
+// move the result. Entropy is measured on the current frame. Momentum is
+// held at the value of ps.
+func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, StepResult{}, err
 	}
@@ -197,9 +197,8 @@ func Step(cfg Config, rng *randRand, history [][]Particle, ps []Particle) ([]Par
 	for i := range proposal {
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
-	window := newEntropyWindow(cfg, history)
-	nHs, nHf := measureWindow(cfg, proposal, window)
-	best, hs, hf := search(cfg, rng, proposal, px, py, window)
+	nHs, nHf := measure(cfg, proposal)
+	best, hs, hf := search(cfg, rng, proposal, px, py)
 	kin, pot := energies(cfg, best)
 	res := StepResult{
 		HSpatial:   hs,
@@ -272,7 +271,6 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 	start := time.Now()
 	simTime := 0.0
 	agreed := 0
-	history := [][]Particle{cloneParticles(ps)}
 	for {
 		if duration > 0 {
 			if time.Since(start) >= duration {
@@ -282,13 +280,9 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 			break
 		}
 		var res StepResult
-		ps, res, err = Step(cfg, rng, history, ps)
+		ps, res, err = Step(cfg, rng, ps)
 		if err != nil {
 			return steps, time.Since(start), first, last, err
-		}
-		history = append(history, cloneParticles(ps))
-		if len(history) > entropyHistory {
-			history = history[len(history)-entropyHistory:]
 		}
 		steps++
 		if res.Agree {

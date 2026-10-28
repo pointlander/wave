@@ -8,19 +8,6 @@ import "math"
 
 const packetTail = 4.5
 
-// entropyHistory is the number of earlier accepted steps mixed into a score.
-const entropyHistory = 2
-
-// entropyWindow holds the summed, per-frame normalized densities of up to
-// entropyHistory earlier accepted states. Each frame sums to one, so adding
-// the candidate's own normalized density and running Shannon entropy gives
-// the equal-weight mixture of those steps.
-type entropyWindow struct {
-	spatial  []float64
-	spectral []float64
-	n        int
-}
-
 // evaluator rasterizes the coherent wave field and scores its entropy.
 type evaluator struct {
 	cfg     Config
@@ -28,7 +15,6 @@ type evaluator struct {
 	field   []complex128
 	scratch []complex128
 	values  []float64
-	mix     []float64
 }
 
 func newEvaluator(cfg Config) *evaluator {
@@ -39,41 +25,7 @@ func newEvaluator(cfg Config) *evaluator {
 		field:   make([]complex128, n),
 		scratch: make([]complex128, n),
 		values:  make([]float64, n),
-		mix:     make([]float64, n),
 	}
-}
-
-// newEntropyWindow precomputes the prior mixture from the most recent
-// accepted states. history is oldest first. A nil window means the score
-// uses the current frame alone.
-func newEntropyWindow(cfg Config, history [][]Particle) *entropyWindow {
-	if len(history) == 0 {
-		return nil
-	}
-	if len(history) > entropyHistory {
-		history = history[len(history)-entropyHistory:]
-	}
-	n := cfg.Grid * cfg.Grid
-	w := &entropyWindow{
-		spatial:  make([]float64, n),
-		spectral: make([]float64, n),
-	}
-	ev := newEvaluator(cfg)
-	for _, ps := range history {
-		spatial, spectral, ok := ev.normalizedPowers(ps)
-		if !ok {
-			continue
-		}
-		for i := range spatial {
-			w.spatial[i] += spatial[i]
-			w.spectral[i] += spectral[i]
-		}
-		w.n++
-	}
-	if w.n == 0 {
-		return nil
-	}
-	return w
 }
 
 // render writes Ψ, the coherent sum of Gaussian packets.
@@ -122,94 +74,20 @@ func (e *evaluator) render(ps []Particle) {
 	}
 }
 
-// score returns the normalized Shannon entropies of |Ψ|² and |Ψ̂|².
-// With a window, each entropy is the equal mixture of this state and the
-// prior accepted states stored in the window.
-func (e *evaluator) score(ps []Particle, w *entropyWindow) (hs, hf float64) {
+// score returns the normalized Shannon entropies of this frame's |Ψ|² and |Ψ̂|².
+func (e *evaluator) score(ps []Particle) (hs, hf float64) {
 	e.render(ps)
-	writePower(e.values, e.field)
-	n := 0
-	var spatial, spectral []float64
-	if w != nil {
-		n = w.n
-		spatial = w.spatial
-		spectral = w.spectral
+	for i, c := range e.field {
+		e.values[i] = real(c)*real(c) + imag(c)*imag(c)
 	}
-	hs = e.mixEntropy(e.values, spatial, n)
+	hs = shannon(e.values)
 	copy(e.scratch, e.field)
 	e.fft.transform(e.scratch, false)
-	writePower(e.values, e.scratch)
-	hf = e.mixEntropy(e.values, spectral, n)
+	for i, c := range e.scratch {
+		e.values[i] = real(c)*real(c) + imag(c)*imag(c)
+	}
+	hf = shannon(e.values)
 	return hs, hf
-}
-
-// mixEntropy is the Shannon entropy of current mixed equally with nPrior
-// already-normalized frames summed in prior. current is normalized in place
-// when priors are present.
-func (e *evaluator) mixEntropy(current, prior []float64, nPrior int) float64 {
-	if nPrior == 0 || prior == nil {
-		return shannon(current)
-	}
-	if !normalizePositive(current) {
-		return shannon(prior)
-	}
-	for i := range e.mix {
-		e.mix[i] = prior[i] + current[i]
-	}
-	return shannon(e.mix)
-}
-
-func (e *evaluator) normalizedPowers(ps []Particle) (spatial, spectral []float64, ok bool) {
-	e.render(ps)
-	spatial = normalizedPower(e.field)
-	if spatial == nil {
-		return nil, nil, false
-	}
-	copy(e.scratch, e.field)
-	e.fft.transform(e.scratch, false)
-	spectral = normalizedPower(e.scratch)
-	if spectral == nil {
-		return nil, nil, false
-	}
-	return spatial, spectral, true
-}
-
-func writePower(dst []float64, field []complex128) {
-	for i, c := range field {
-		dst[i] = real(c)*real(c) + imag(c)*imag(c)
-	}
-}
-
-func normalizedPower(field []complex128) []float64 {
-	out := make([]float64, len(field))
-	writePower(out, field)
-	if !normalizePositive(out) {
-		return nil
-	}
-	return out
-}
-
-// normalizePositive scales a non-negative vector to sum to one.
-// Non-positive entries are cleared. It reports false when the mass is zero.
-func normalizePositive(v []float64) bool {
-	sum := 0.0
-	for _, x := range v {
-		if x > 0 {
-			sum += x
-		}
-	}
-	if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
-		return false
-	}
-	inv := 1 / sum
-	for i, x := range v {
-		if x > 0 {
-			v[i] = x * inv
-		} else {
-			v[i] = 0
-		}
-	}
-	return true
 }
 
 // densityAndSpectrum returns |Ψ|² and the fftshifted spectral power
@@ -267,11 +145,7 @@ func fftShift(v []float64, n int) []float64 {
 }
 
 func measure(cfg Config, ps []Particle) (hs, hf float64) {
-	return newEvaluator(cfg).score(ps, nil)
-}
-
-func measureWindow(cfg Config, ps []Particle, w *entropyWindow) (hs, hf float64) {
-	return newEvaluator(cfg).score(ps, w)
+	return newEvaluator(cfg).score(ps)
 }
 
 // peakBin returns the (x, y) bin of the maximum spectral power of Ψ.

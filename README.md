@@ -35,11 +35,9 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 - spatial entropy of the density `|Ψ|²`
 - frequency entropy of the power spectrum `|Ψ̂|²`
 
-From the first integrated step on, each entropy is the equal-weight mixture of the candidate with the previous two accepted steps. The initial frame is scored on its own. Fewer than two earlier steps use the steps that exist.
+The fitness of a frame is `H_frequency / H_spatial` of that frame. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad and receives no merge weight. A zero ratio takes the whole step.
 
-The fitness of a candidate is `H_frequency / H_spatial`. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad.
-
-The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest ratio it reached. The step accepts the lowest-ratio state evaluated, and the Newtonian proposal is one of those states.
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest ratio it reached. The step merges the evaluated frames that share that lowest ratio, weighted by its inverse. A frame with a worse ratio does not move the result, so the Newtonian proposal is kept when it has the best ratio. Positions and phases are averaged on the circle, velocities linearly, and total momentum is restored again.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
@@ -52,7 +50,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. After step 0 those entropies and ratios use the mixture with the previous two accepted steps. `agree` is 1 when the accepted state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
+A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the merged frame. `agree` is 1 when the merged state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 

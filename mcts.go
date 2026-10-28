@@ -84,40 +84,39 @@ func selectChild(cfg Config, n *mctsNode) *mctsNode {
 	return best
 }
 
-// search runs Monte Carlo tree search rooted at the Newtonian proposal.
-// The returned state is the lowest-fitness state evaluated, including
-// the root, so the step does not score worse than that proposal.
-func search(cfg Config, rng *randRand, base []Particle, px, py float64, window *entropyWindow) (best []Particle, hs, hf float64) {
-	_, best, hs, hf = runMCTS(cfg, rng, base, px, py, window)
-	return best, hs, hf
+// scoredState is one frame the search evaluated, with its current-frame fitness.
+type scoredState struct {
+	particles []Particle
+	fit       float64
 }
 
-// runMCTS returns the tree and the lowest-fitness state it evaluated.
-func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64, window *entropyWindow) (root *mctsNode, best []Particle, hs, hf float64) {
+// search runs Monte Carlo tree search rooted at the Newtonian proposal.
+// The returned state merges the evaluated frames that share the lowest
+// entropy ratio, weighted by the inverse of that ratio. A worse frame does
+// not move the result. Entropies are measured on the merged frame.
+func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
+	_, states := runMCTS(cfg, rng, base, px, py)
+	merged := mergeStates(cfg, states, px, py)
+	hs, hf = newEvaluator(cfg).score(merged)
+	return merged, hs, hf
+}
+
+// runMCTS returns the tree and every state it scored, root first.
+func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *mctsNode, states []scoredState) {
 	ev := newEvaluator(cfg)
 	root = &mctsNode{particles: cloneParticles(base)}
-	root.hs, root.hf = ev.score(root.particles, window)
+	root.hs, root.hf = ev.score(root.particles)
 	root.fit = fitness(root.hs, root.hf)
 	root.visits = 1
 	root.valueSum = root.fit
 	root.mean = root.fit
-
-	bestP := root.particles
-	bestHS, bestHF := root.hs, root.hf
-	bestFit := root.fit
-	consider := func(ps []Particle, shs, shf, fit float64) {
-		if fit < bestFit {
-			bestFit = fit
-			bestHS, bestHF = shs, shf
-			bestP = ps
-		}
-	}
+	states = append(states, scoredState{particles: root.particles, fit: root.fit})
 
 	expand := func(parent *mctsNode) *mctsNode {
 		childP := cloneParticles(parent.particles)
 		mutate(cfg, rng, childP)
 		finishParticles(cfg, childP, px, py)
-		chs, chf := ev.score(childP, window)
+		chs, chf := ev.score(childP)
 		cfit := fitness(chs, chf)
 		child := &mctsNode{
 			parent:    parent,
@@ -126,7 +125,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64, window 
 			hf:        chf,
 			fit:       cfit,
 		}
-		consider(childP, chs, chf, cfit)
+		states = append(states, scoredState{particles: childP, fit: cfit})
 		parent.children = append(parent.children, child)
 		return child
 	}
@@ -150,9 +149,9 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64, window 
 			roll = cloneParticles(roll)
 			mutate(cfg, rng, roll)
 			finishParticles(cfg, roll, px, py)
-			rhs, rhf := ev.score(roll, window)
+			rhs, rhf := ev.score(roll)
 			rfit := fitness(rhs, rhf)
-			consider(roll, rhs, rhf, rfit)
+			states = append(states, scoredState{particles: roll, fit: rfit})
 			if rfit < value {
 				value = rfit
 			}
@@ -163,7 +162,118 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64, window 
 			n.mean = n.valueSum / float64(n.visits)
 		}
 	}
-	return root, bestP, bestHS, bestHF
+	return root, states
+}
+
+// ratioWeight is 1 / (H_frequency / H_spatial). A zero ratio takes the
+// whole step. A non-finite ratio, including zero spatial entropy, has no weight.
+func ratioWeight(fit float64) float64 {
+	if fit == 0 {
+		return math.Inf(1)
+	}
+	if fit < 0 || math.IsNaN(fit) || math.IsInf(fit, 0) {
+		return 0
+	}
+	return 1 / fit
+}
+
+// mergeStates averages the evaluated frames that share the lowest ratio.
+// A worse frame does not move the result, so a Newtonian proposal that
+// has the best ratio is returned unchanged. Positions and phases use the
+// circular mean. Velocities are linear. Total momentum is then restored
+// to (px, py).
+func mergeStates(cfg Config, states []scoredState, px, py float64) []Particle {
+	if len(states) == 0 {
+		return nil
+	}
+	bestFit := math.Inf(1)
+	for _, s := range states {
+		if !math.IsNaN(s.fit) && s.fit < bestFit {
+			bestFit = s.fit
+		}
+	}
+	chosen := make([]scoredState, 0, len(states))
+	weights := make([]float64, 0, len(states))
+	perfect := false
+	for _, s := range states {
+		if math.IsNaN(s.fit) || s.fit > bestFit {
+			continue
+		}
+		w := ratioWeight(s.fit)
+		if math.IsInf(w, 1) {
+			if !perfect {
+				chosen = chosen[:0]
+				weights = weights[:0]
+				perfect = true
+			}
+			chosen = append(chosen, s)
+			weights = append(weights, 1)
+			continue
+		}
+		if perfect || w <= 0 || math.IsNaN(w) {
+			continue
+		}
+		chosen = append(chosen, s)
+		weights = append(weights, w)
+	}
+	if len(chosen) == 0 {
+		out := cloneParticles(states[0].particles)
+		restoreMomentum(out, px, py)
+		for i := range out {
+			out[i].SyncFrequency(cfg.Hbar)
+		}
+		return out
+	}
+	out := cloneParticles(chosen[0].particles)
+	n := len(out)
+	xs := make([]float64, len(chosen))
+	ys := make([]float64, len(chosen))
+	ph := make([]float64, len(chosen))
+	for i := 0; i < n; i++ {
+		var vx, vy, wsum float64
+		for k, s := range chosen {
+			xs[k] = s.particles[i].S.X
+			ys[k] = s.particles[i].S.Y
+			ph[k] = s.particles[i].F.Phase
+			vx += weights[k] * s.particles[i].S.VX
+			vy += weights[k] * s.particles[i].S.VY
+			wsum += weights[k]
+		}
+		out[i].S.X = circularMean(xs, weights, cfg.L)
+		out[i].S.Y = circularMean(ys, weights, cfg.L)
+		out[i].S.VX = vx / wsum
+		out[i].S.VY = vy / wsum
+		out[i].F.Phase = circularMean(ph, weights, 2*math.Pi)
+	}
+	restoreMomentum(out, px, py)
+	for i := range out {
+		out[i].SyncFrequency(cfg.Hbar)
+	}
+	return out
+}
+
+// circularMean is the weighted mean of values on a circle of the given period.
+func circularMean(values, weights []float64, period float64) float64 {
+	var s, c float64
+	for i, v := range values {
+		ang := 2 * math.Pi * v / period
+		s += weights[i] * math.Sin(ang)
+		c += weights[i] * math.Cos(ang)
+	}
+	if s*s+c*c < 1e-24 {
+		best := 0
+		for i := 1; i < len(weights); i++ {
+			if weights[i] > weights[best] {
+				best = i
+			}
+		}
+		return values[best]
+	}
+	ang := math.Atan2(s, c)
+	if ang < 0 {
+		ang += 2 * math.Pi
+	}
+	return ang * period / (2 * math.Pi)
 }
 
 // fitness is H_frequency / H_spatial. Minimizing it lowers spectral
