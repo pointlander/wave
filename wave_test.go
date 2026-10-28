@@ -421,6 +421,26 @@ func TestMCTSSelection(t *testing.T) {
 	}
 }
 
+func TestSearchExpandsOneExtraPly(t *testing.T) {
+	cfg := testConfig()
+	cfg.Iterations = 1
+	cfg.Rollout = 0
+	cfg.N = 1
+	cfg.Gravity = 0
+	p := Particle{S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
+	p.SyncFrequency(cfg.Hbar)
+	root, _, _, _ := runMCTS(cfg, newRNG(1), []Particle{p}, 0, 0, nil)
+	if len(root.children) != 1 {
+		t.Fatalf("root children = %d", len(root.children))
+	}
+	if len(root.children[0].children) != 1 {
+		t.Fatalf("depth-1 children = %d", len(root.children[0].children))
+	}
+	if len(root.children[0].children[0].children) != 0 {
+		t.Fatal("expanded past the extra ply")
+	}
+}
+
 func TestWriteFrame(t *testing.T) {
 	cfg := testConfig()
 	ps, err := Initialize(cfg, newRNG(2))

@@ -88,8 +88,14 @@ func selectChild(cfg Config, n *mctsNode) *mctsNode {
 // The returned state is the lowest-fitness state evaluated, including
 // the root, so the step does not score worse than that proposal.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64, window *entropyWindow) (best []Particle, hs, hf float64) {
+	_, best, hs, hf = runMCTS(cfg, rng, base, px, py, window)
+	return best, hs, hf
+}
+
+// runMCTS returns the tree and the lowest-fitness state it evaluated.
+func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64, window *entropyWindow) (root *mctsNode, best []Particle, hs, hf float64) {
 	ev := newEvaluator(cfg)
-	root := &mctsNode{particles: cloneParticles(base)}
+	root = &mctsNode{particles: cloneParticles(base)}
 	root.hs, root.hf = ev.score(root.particles, window)
 	root.fit = fitness(root.hs, root.hf)
 	root.visits = 1
@@ -107,27 +113,39 @@ func search(cfg Config, rng *randRand, base []Particle, px, py float64, window *
 		}
 	}
 
-	for i := 0; i < cfg.Iterations; i++ {
-		node := root
-		for len(node.children) >= maxChildren(cfg.Widen, node.visits) && len(node.children) > 0 {
-			node = selectChild(cfg, node)
-		}
-		childP := cloneParticles(node.particles)
+	expand := func(parent *mctsNode) *mctsNode {
+		childP := cloneParticles(parent.particles)
 		mutate(cfg, rng, childP)
 		finishParticles(cfg, childP, px, py)
 		chs, chf := ev.score(childP, window)
 		cfit := fitness(chs, chf)
 		child := &mctsNode{
-			parent:    node,
+			parent:    parent,
 			particles: childP,
 			hs:        chs,
 			hf:        chf,
 			fit:       cfit,
 		}
 		consider(childP, chs, chf, cfit)
+		parent.children = append(parent.children, child)
+		return child
+	}
 
-		value := cfit
-		roll := childP
+	for i := 0; i < cfg.Iterations; i++ {
+		node := root
+		for len(node.children) >= maxChildren(cfg.Widen, node.visits) && len(node.children) > 0 {
+			node = selectChild(cfg, node)
+		}
+		// Expand the selected node, then one ply further, so the tree
+		// keeps the next mutation instead of leaving it to the rollout.
+		child := expand(node)
+		deeper := expand(child)
+
+		value := child.fit
+		if deeper.fit < value {
+			value = deeper.fit
+		}
+		roll := deeper.particles
 		for d := 0; d < cfg.Rollout; d++ {
 			roll = cloneParticles(roll)
 			mutate(cfg, rng, roll)
@@ -139,14 +157,13 @@ func search(cfg Config, rng *randRand, base []Particle, px, py float64, window *
 				value = rfit
 			}
 		}
-		for n := child; n != nil; n = n.parent {
+		for n := deeper; n != nil; n = n.parent {
 			n.visits++
 			n.valueSum += value
 			n.mean = n.valueSum / float64(n.visits)
 		}
-		node.children = append(node.children, child)
 	}
-	return bestP, bestHS, bestHF
+	return root, bestP, bestHS, bestHF
 }
 
 // fitness is H_frequency / H_spatial. Minimizing it lowers spectral
