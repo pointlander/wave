@@ -5,8 +5,9 @@
 // Command wave simulates a two-dimensional group of galaxies. Each galaxy
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
-// then searches around that proposal. Frames that share the lowest
-// H_frequency / H_spatial are merged by the inverse of that ratio.
+// then searches around that proposal. The score is frequency entropy plus
+// a charge for leaving that proposal. Frames that share the lowest score
+// are merged by its inverse.
 package main
 
 import (
@@ -60,8 +61,9 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
-		fmt.Fprintf(os.Stderr, "Frames that share the lowest H_frequency / H_spatial are merged\n")
-		fmt.Fprintf(os.Stderr, "by the inverse of that ratio. A worse frame is left out.\n\n")
+		fmt.Fprintf(os.Stderr, "The score is frequency entropy plus a charge for leaving the\n")
+		fmt.Fprintf(os.Stderr, "Newtonian proposal. Frames that share the lowest score are merged\n")
+		fmt.Fprintf(os.Stderr, "by its inverse. Spatial entropy is not scored. A worse frame is left out.\n\n")
 		fmt.Fprintf(os.Stderr, "Lengths are kpc, masses are solar masses, velocities are km/s,\n")
 		fmt.Fprintf(os.Stderr, "and displayed time is Gyr. Energy is M_sun (km/s)^2.\n\n")
 		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")
@@ -137,12 +139,11 @@ func run() (err error) {
 			return err
 		}
 	}
-	fmt.Printf("\nfitness %.4f -> %.4f\n", first.Fitness, last.Fitness)
-	fmt.Printf("spatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
+	fmt.Printf("\nspatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
 		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
-		fmt.Printf("mean fitness improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
+		fmt.Printf("mean frequency-entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 		fmt.Printf("newtonian agreement %d/%d (%.3f)\n", last.AgreeCount, steps, last.AgreeRate)
 	}
 	if runFor > 0 {
@@ -185,14 +186,14 @@ func (d *durationFlag) Set(s string) error {
 
 func traceHeader() []string {
 	return []string{
-		"step", "t_gyr", "h_spatial", "h_frequency", "fitness", "newton",
+		"step", "t_gyr", "h_spatial", "h_frequency", "newton",
 		"sep_kpc", "kinetic", "potential", "agree", "agree_rate",
 	}
 }
 
 func printHeader() {
-	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %12s %12s %5s %10s\n",
-		"step", "t_Gyr", "H_space", "H_freq", "Hf/Hs", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
+	fmt.Printf("%4s %8s %9s %9s %9s %9s %12s %12s %5s %10s\n",
+		"step", "t_Gyr", "H_space", "H_freq", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
 }
 
 func printRow(step int, time float64, r StepResult) {
@@ -200,8 +201,8 @@ func printRow(step int, time float64, r StepResult) {
 	if r.Agree {
 		agree = 1
 	}
-	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f\n",
-		step, time, r.HSpatial, r.HFrequency, r.Fitness, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
+	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f\n",
+		step, time, r.HSpatial, r.HFrequency, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
 }
 
 func boolInt(v bool) int {
@@ -221,7 +222,6 @@ func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps 
 			strconv.FormatFloat(time, 'f', 6, 64),
 			strconv.FormatFloat(r.HSpatial, 'f', 6, 64),
 			strconv.FormatFloat(r.HFrequency, 'f', 6, 64),
-			strconv.FormatFloat(r.Fitness, 'f', 6, 64),
 			strconv.FormatFloat(r.Newton, 'f', 6, 64),
 			strconv.FormatFloat(r.Separation, 'f', 6, 64),
 			strconv.FormatFloat(r.Kinetic, 'f', 6, 64),

@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the state with the lowest frequency entropy divided by spatial entropy.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps a state only when its lower frequency entropy pays for leaving the proposal.
 
 ## Units
 
@@ -35,9 +35,9 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 - spatial entropy of the density `|Ψ|²`
 - frequency entropy of the power spectrum `|Ψ̂|²`
 
-The fitness of a frame is `H_frequency / H_spatial` of that frame. Lower is better, so the search minimizes spectral entropy and maximizes spatial entropy. A state with zero spatial entropy scores as infinitely bad and receives no merge weight. A zero ratio takes the whole step.
+The reported frequency entropy of a frame is `H_frequency`. Spatial entropy is measured and reported, and it does not enter the score. The search score is that frequency entropy plus `0.005` times the mean squared distance from the Newtonian proposal, measured in units of the mutation scales. Lower is better. A move is kept only when the drop in frequency entropy exceeds that charge, and the printed entropies do not include it. Zero frequency entropy at the proposal takes the whole step. A non-finite frequency entropy receives no merge weight.
 
-The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest ratio it reached. The step merges the evaluated frames that share that lowest ratio, weighted by its inverse. A frame with a worse ratio does not move the result, so the Newtonian proposal is kept when it has the best ratio. Positions and phases are averaged on the circle, velocities linearly, and total momentum is restored again.
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. The step merges the evaluated frames that share that lowest score, weighted by its inverse. A frame with a worse score does not move the result, so the Newtonian proposal is kept when no move pays for itself. Positions and phases are averaged on the circle, velocities linearly, and total momentum is restored again.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
@@ -50,7 +50,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, their ratio, the Newtonian proposal's ratio, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the merged frame. `agree` is 1 when the merged state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
+A default run prints one row per step: spatial entropy, frequency entropy, the Newtonian proposal's frequency entropy, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the merged frame. `agree` is 1 when the merged state matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 

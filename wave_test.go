@@ -230,20 +230,50 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 	if ths >= ahs {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
 	}
-	if fitness(ahs, ahf) >= fitness(ths, thf) {
-		t.Fatalf("spread fitness %v, coincident fitness %v", fitness(ahs, ahf), fitness(ths, thf))
+	if math.Abs(fitness(ahf)-ahf) > 1e-15 || math.Abs(fitness(thf)-thf) > 1e-15 {
+		t.Fatalf("fitness %v %v, frequency entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
 	}
 }
 
-func TestFitnessRatio(t *testing.T) {
-	if got := fitness(0.4, 0.2); math.Abs(got-0.5) > 1e-12 {
+func TestFitnessIsFrequencyEntropy(t *testing.T) {
+	if got := fitness(0.2); math.Abs(got-0.2) > 1e-12 {
 		t.Fatalf("fitness = %v", got)
 	}
-	if !math.IsInf(fitness(0, 0.3), 1) {
-		t.Fatal("zero spatial entropy should be the worst fitness")
+	if fitness(0) != 0 {
+		t.Fatal("zero frequency entropy should be the best fitness")
 	}
-	if !math.IsInf(fitness(0, 0), 1) {
-		t.Fatal("zero entropies should be the worst fitness")
+	if !math.IsInf(fitness(math.NaN()), 1) {
+		t.Fatal("non-finite frequency entropy should be the worst fitness")
+	}
+	if !math.IsInf(fitness(-0.1), 1) {
+		t.Fatal("negative frequency entropy should be the worst fitness")
+	}
+}
+
+func TestDepartureChargesLeavingNewton(t *testing.T) {
+	cfg := testConfig()
+	ref := []Particle{{
+		S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma},
+		F: Frequency{Phase: 0.2},
+	}}
+	if departure(cfg, ref, ref) != 0 {
+		t.Fatal("the proposal should have no departure")
+	}
+	moved := cloneParticles(ref)
+	moved[0].S.X += cfg.MutPos
+	moved[0].F.Phase += cfg.MutPhase
+	d := departure(cfg, moved, ref)
+	if math.Abs(d-0.4) > 1e-12 {
+		t.Fatalf("departure = %v", d)
+	}
+	stay := stateScore(cfg, 0.50, ref, ref)
+	short := stateScore(cfg, 0.50-departureCost*d+1e-4, moved, ref)
+	if short <= stay {
+		t.Fatalf("unpaid move %v beat the proposal %v", short, stay)
+	}
+	paid := stateScore(cfg, 0.50-departureCost*d-0.01, moved, ref)
+	if paid >= stay {
+		t.Fatalf("paid move %v lost to the proposal %v", paid, stay)
 	}
 }
 
@@ -347,7 +377,7 @@ func TestMergeWeights(t *testing.T) {
 		{particles: body(0.32, 0.50, 0.25), fit: 0.5},
 	}
 	blend := mergeStates(cfg, tied, 0, 0)
-	// Equal ratios: circular mean of 0.20 and 0.32, linear mean of the velocities.
+	// Equal frequency entropies: circular mean of 0.20 and 0.32, linear mean of the velocities.
 	if math.Abs(blend[0].S.X-0.26) > 1e-12 || math.Abs(blend[0].S.VX-0.175) > 1e-12 {
 		t.Fatalf("tied merge %v %v", blend[0].S.X, blend[0].S.VX)
 	}
@@ -364,7 +394,7 @@ func TestMergeWeights(t *testing.T) {
 	perfect := append(states, scoredState{particles: body(0.80, 0.70, 0.3), fit: 0})
 	only := mergeStates(cfg, perfect, 0, 0)
 	if math.Abs(only[0].S.X-0.80) > 1e-9 || math.Abs(only[1].S.X-0.70) > 1e-9 {
-		t.Fatalf("zero ratio did not take the step: %v %v", only[0].S.X, only[1].S.X)
+		t.Fatalf("zero frequency entropy did not take the step: %v %v", only[0].S.X, only[1].S.X)
 	}
 }
 

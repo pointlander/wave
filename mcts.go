@@ -21,6 +21,38 @@ type mctsNode struct {
 	fit       float64
 }
 
+// departure is the mean squared distance from ref, in units of the mutation
+// scales. The Newtonian proposal has departure 0 from itself.
+func departure(cfg Config, ps, ref []Particle) float64 {
+	if len(ps) == 0 || len(ps) != len(ref) {
+		return 0
+	}
+	var sum, n float64
+	for i := range ps {
+		if cfg.MutPos > 0 {
+			dx := minImage(ps[i].S.X-ref[i].S.X, cfg.L) / cfg.MutPos
+			dy := minImage(ps[i].S.Y-ref[i].S.Y, cfg.L) / cfg.MutPos
+			sum += dx*dx + dy*dy
+			n += 2
+		}
+		if cfg.MutVel > 0 {
+			dvx := (ps[i].S.VX - ref[i].S.VX) / cfg.MutVel
+			dvy := (ps[i].S.VY - ref[i].S.VY) / cfg.MutVel
+			sum += dvx*dvx + dvy*dvy
+			n += 2
+		}
+		if cfg.MutPhase > 0 {
+			dp := phaseDelta(ps[i].F.Phase, ref[i].F.Phase) / cfg.MutPhase
+			sum += dp * dp
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / n
+}
+
 func mutate(cfg Config, rng *randRand, ps []Particle) {
 	for i := range ps {
 		ps[i].S.X += cfg.MutPos * rng.NormFloat64()
@@ -92,8 +124,10 @@ type scoredState struct {
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
 // The returned state merges the evaluated frames that share the lowest
-// entropy ratio, weighted by the inverse of that ratio. A worse frame does
-// not move the result. Entropies are measured on the merged frame.
+// score, weighted by its inverse. The score is the frequency entropy plus
+// a charge for leaving the Newtonian proposal. A worse frame does not move
+// the result. Reported entropies are measured on the merged frame and do
+// not include the charge. Spatial entropy is not part of the score.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
 	_, states := runMCTS(cfg, rng, base, px, py)
 	merged := mergeStates(cfg, states, px, py)
@@ -106,7 +140,8 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	ev := newEvaluator(cfg)
 	root = &mctsNode{particles: cloneParticles(base)}
 	root.hs, root.hf = ev.score(root.particles)
-	root.fit = fitness(root.hs, root.hf)
+	ref := root.particles
+	root.fit = stateScore(cfg, root.hf, root.particles, ref)
 	root.visits = 1
 	root.valueSum = root.fit
 	root.mean = root.fit
@@ -117,7 +152,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		mutate(cfg, rng, childP)
 		finishParticles(cfg, childP, px, py)
 		chs, chf := ev.score(childP)
-		cfit := fitness(chs, chf)
+		cfit := stateScore(cfg, chf, childP, ref)
 		child := &mctsNode{
 			parent:    parent,
 			particles: childP,
@@ -149,8 +184,8 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 			roll = cloneParticles(roll)
 			mutate(cfg, rng, roll)
 			finishParticles(cfg, roll, px, py)
-			rhs, rhf := ev.score(roll)
-			rfit := fitness(rhs, rhf)
+			_, rhf := ev.score(roll)
+			rfit := stateScore(cfg, rhf, roll, ref)
 			states = append(states, scoredState{particles: roll, fit: rfit})
 			if rfit < value {
 				value = rfit
@@ -165,8 +200,8 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	return root, states
 }
 
-// ratioWeight is 1 / (H_frequency / H_spatial). A zero ratio takes the
-// whole step. A non-finite ratio, including zero spatial entropy, has no weight.
+// ratioWeight is 1 / H_frequency. Zero frequency entropy takes the whole
+// step. A non-finite frequency entropy has no weight.
 func ratioWeight(fit float64) float64 {
 	if fit == 0 {
 		return math.Inf(1)
@@ -177,11 +212,11 @@ func ratioWeight(fit float64) float64 {
 	return 1 / fit
 }
 
-// mergeStates averages the evaluated frames that share the lowest ratio.
-// A worse frame does not move the result, so a Newtonian proposal that
-// has the best ratio is returned unchanged. Positions and phases use the
-// circular mean. Velocities are linear. Total momentum is then restored
-// to (px, py).
+// mergeStates averages the evaluated frames that share the lowest frequency
+// entropy. A worse frame does not move the result, so a Newtonian proposal
+// that has the best frequency entropy is returned unchanged. Positions and
+// phases use the circular mean. Velocities are linear. Total momentum is
+// then restored to (px, py).
 func mergeStates(cfg Config, states []scoredState, px, py float64) []Particle {
 	if len(states) == 0 {
 		return nil
@@ -276,16 +311,26 @@ func circularMean(values, weights []float64, period float64) float64 {
 	return ang * period / (2 * math.Pi)
 }
 
-// fitness is H_frequency / H_spatial. Minimizing it lowers spectral
-// entropy and raises spatial entropy. A non-positive spatial entropy
-// cannot be improved further, so it scores +Inf.
-func fitness(hs, hf float64) float64 {
-	if hs <= 0 || math.IsNaN(hs) || math.IsNaN(hf) {
+// departureCost is the frequency entropy charged for a mean squared
+// mutation of 1 away from the Newtonian proposal. A move is kept only when
+// it lowers the frequency entropy by more than this charge.
+const departureCost = 0.005
+
+// fitness is the frequency-domain entropy. Lower is better. Spatial entropy
+// is not part of the score. A non-finite frequency entropy scores +Inf.
+func fitness(hf float64) float64 {
+	if math.IsNaN(hf) || math.IsInf(hf, 0) || hf < 0 {
 		return math.Inf(1)
 	}
-	fit := hf / hs
-	if math.IsNaN(fit) || math.IsInf(fit, 0) {
-		return math.Inf(1)
+	return hf
+}
+
+// stateScore is the frequency entropy plus the cost of leaving ref.
+// ref is the Newtonian proposal, whose own score is its frequency entropy.
+func stateScore(cfg Config, hf float64, ps, ref []Particle) float64 {
+	fit := fitness(hf)
+	if math.IsInf(fit, 0) {
+		return fit
 	}
-	return fit
+	return fit + departureCost*departure(cfg, ps, ref)
 }

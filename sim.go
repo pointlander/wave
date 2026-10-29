@@ -149,9 +149,10 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is H_frequency / H_spatial of the merged frame. Agree is true
-// when that frame matches the Newtonian proposal. AgreeCount and AgreeRate
-// accumulate that comparison over the run.
+// Fitness is the frequency entropy of the merged frame. Spatial entropy is
+// recorded and is not part of the score. Agree is true when that frame
+// matches the Newtonian proposal. AgreeCount and AgreeRate accumulate that
+// comparison over the run.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
@@ -176,7 +177,7 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	return StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
-		Fitness:    fitness(hs, hf),
+		Fitness:    fitness(hf),
 		Separation: meanSeparation(ps, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
@@ -184,9 +185,11 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 }
 
 // Step roots a Monte Carlo tree search at a Newtonian proposal and merges
-// the frames that share the lowest entropy ratio. A worse frame does not
-// move the result. Entropy is measured on the current frame. Momentum is
-// held at the value of ps.
+// the frames with the lowest score. The score is the frequency entropy plus
+// a charge for leaving the proposal, so a small entropy drop does not move
+// the galaxies. A worse frame does not move the result. Reported entropy is
+// measured on the current frame and does not include the charge. Spatial
+// entropy is not part of the score. Momentum is held at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, StepResult{}, err
@@ -197,14 +200,14 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 	for i := range proposal {
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
-	nHs, nHf := measure(cfg, proposal)
+	_, nHf := measure(cfg, proposal)
 	best, hs, hf := search(cfg, rng, proposal, px, py)
 	kin, pot := energies(cfg, best)
 	res := StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
-		Fitness:    fitness(hs, hf),
-		Newton:     fitness(nHs, nHf),
+		Fitness:    fitness(hf),
+		Newton:     fitness(nHf),
 		Separation: meanSeparation(best, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
