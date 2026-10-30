@@ -149,7 +149,7 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is the frequency entropy of the accepted frame. Spatial entropy is
+// Fitness is the block entropy of the accepted frame. Spatial entropy is
 // recorded and is not part of the score. Agree is true when that frame
 // matches the Newtonian proposal. AgreeCount and AgreeRate accumulate that
 // comparison over the run.
@@ -185,7 +185,7 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 }
 
 // Step roots a Monte Carlo tree search at a Newtonian proposal and keeps the
-// single best-scoring frame. The score is the frequency entropy plus a
+// single best-scoring frame. The score is the block entropy plus a
 // charge for leaving the proposal, so a small entropy drop does not move
 // the galaxies. Reported entropy is measured on the accepted frame and does
 // not include the charge. Spatial entropy is not part of the score.

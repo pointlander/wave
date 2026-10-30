@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the single lowest-scoring state, and leaves the proposal only when the lower frequency entropy pays for the move.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the single lowest-scoring state, and leaves the proposal only when the lower block entropy pays for the move.
 
 ## Units
 
@@ -30,12 +30,11 @@ Each galaxy is a Gaussian envelope of width `σ` centered at `(X, Y)`, moving wi
 - spectral width `σ_k = 1 / (2σ)`
 - an internal phase `φ`
 
-The field `Ψ` is the coherent sum of the packets. Each reported entropy is the von Neumann entropy of the entanglement between the two axes of that wave, divided by `log(grid)`. A product wave scores 0 and a maximally entangled wave scores 1.
+The field `Ψ` is the coherent sum of the packets. `H_spatial` is the von Neumann entropy of the entanglement between `x` and `y`, divided by `log(grid)`. A product wave scores 0 and a maximally entangled wave scores 1.
 
-- `H_spatial` is that entanglement of `Ψ` between `x` and `y`
-- `H_frequency` is the same entanglement of the FFT `Ψ̂` between `k_x` and `k_y`
+`H_block` splits that grid into blocks of 8 cells on a side, or half the grid when that is smaller. It is the von Neumann entropy of the entanglement between the block index and the offset inside the block, divided by the log of the smaller factor. Blocks that carry the same interior wave score 0, and a wave that differs from block to block scores higher. A Fourier transform inside each block, taken separately along each axis, leaves `H_block` unchanged, so it is computed from `Ψ` directly.
 
-The reported frequency entropy of a frame is `H_frequency`. Spatial entropy is measured and reported, and it does not enter the score. The search score is that frequency entropy plus `0.005` times the mean squared distance from the Newtonian proposal, measured in units of the mutation scales. Lower is better. A move is kept only when the drop in frequency entropy exceeds that charge, and the printed entropies do not include it. A non-finite frequency entropy is skipped.
+Spatial entropy is measured and reported, and it does not enter the score. The search score is `H_block` plus `0.03` times the mean squared distance from the Newtonian proposal, measured in units of the mutation scales. Lower is better. A move is kept only when the drop in block entropy exceeds that charge, and the printed entropies do not include it. A non-finite block entropy is skipped.
 
 The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when no move pays for itself.
 
@@ -50,7 +49,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, the Newtonian proposal's frequency entropy, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the accepted frame. `agree` is 1 when that frame matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
+A default run prints one row per step: spatial entropy, block entropy, the Newtonian proposal's block entropy, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the accepted frame. `agree` is 1 when that frame matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. The summary reports the same fraction for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 

@@ -224,7 +224,7 @@ func mutateFinished(cfg Config, rng *randRand, from []Particle, px, py float64) 
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
 // The returned state is the single best-scoring frame. The score is the
-// frequency entropy plus a charge for leaving the Newtonian proposal.
+// block entropy plus a charge for leaving the Newtonian proposal.
 // Reported entropies are measured on that frame and do not include the
 // charge. Spatial entropy is not part of the score.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
@@ -401,13 +401,13 @@ func bestState(states []scoredState) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// departureCost is the frequency entropy charged for a mean squared
+// departureCost is the block entropy charged for a mean squared
 // mutation of 1 away from the Newtonian proposal. A move is kept only when
-// it lowers the frequency entropy by more than this charge.
-const departureCost = 0.005
+// it lowers the block entropy by more than this charge.
+const departureCost = 0.03
 
-// fitness is the frequency-domain entropy. Lower is better. Spatial entropy
-// is not part of the score. A non-finite frequency entropy scores +Inf.
+// fitness is the block entropy. Lower is better. Spatial entropy
+// is not part of the score. A non-finite block entropy scores +Inf.
 func fitness(hf float64) float64 {
 	if math.IsNaN(hf) || math.IsInf(hf, 0) || hf < 0 {
 		return math.Inf(1)
@@ -415,8 +415,8 @@ func fitness(hf float64) float64 {
 	return hf
 }
 
-// stateScore is the frequency entropy plus the cost of leaving ref.
-// ref is the Newtonian proposal, whose own score is its frequency entropy.
+// stateScore is the block entropy plus the cost of leaving ref.
+// ref is the Newtonian proposal, whose own score is its block entropy.
 func stateScore(cfg Config, hf float64, ps, ref []Particle) float64 {
 	fit := fitness(hf)
 	if math.IsInf(fit, 0) {

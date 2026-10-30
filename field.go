@@ -11,6 +11,12 @@ import (
 
 const packetTail = 4.5
 
+// tileCells is the side of each spatial block, in grid cells. The scored
+// entropy is the entanglement between the block index and the offset
+// inside the block. A Fourier transform inside a block, taken separately
+// along each axis, leaves that entropy unchanged.
+const tileCells = 8
+
 // evaluator rasterizes the coherent wave field and scores its quantum entropy.
 type evaluator struct {
 	cfg     Config
@@ -77,16 +83,33 @@ func (e *evaluator) render(ps []Particle) {
 	}
 }
 
-// score returns the normalized von Neumann entanglement entropies of Ψ and
-// of its FFT. Each is the entropy of the state reduced onto one axis.
+// score returns the axis entanglement of Ψ and the block entanglement the
+// search minimizes. hs is the entanglement between x and y. hf splits the
+// grid into tiles of tileCells and is the entanglement between the tile
+// index and the offset inside the tile.
 func (e *evaluator) score(ps []Particle) (hs, hf float64) {
 	g := e.cfg.Grid
 	e.render(ps)
 	hs = vonNeumann(e.field, g, e.rho)
-	copy(e.scratch, e.field)
-	e.fft.transform(e.scratch, false)
-	hf = vonNeumann(e.scratch, g, e.rho)
+	hf = blockEntropy(e.field, g, tileSide(g), e.rho)
 	return hs, hf
+}
+
+// tileSide is the block side in cells for an n by n grid. It is the
+// largest power of two no greater than tileCells that leaves at least two
+// blocks along each axis.
+func tileSide(n int) int {
+	b := tileCells
+	if b > n/2 {
+		b = n / 2
+	}
+	for b >= 2 && n%b != 0 {
+		b >>= 1
+	}
+	if b < 2 {
+		return 0
+	}
+	return b
 }
 
 // densityAndSpectrum returns |Ψ|² and the fftshifted spectral power
@@ -137,8 +160,81 @@ func vonNeumann(psi []complex128, n int, rho []complex128) float64 {
 			rho[y1*n+y2] = complex(re*inv, im*inv)
 		}
 	}
+	return entropyOfRho(rho, n)
+}
+
+// blockEntropy is the entanglement between the block index and the offset
+// inside the block, divided by the log of the smaller factor. psi is
+// row-major n by n and b is the block side in cells. Identical interiors
+// score 0 and a maximally entangled cut scores 1. rho is scratch of at
+// least side*side, where side is that smaller factor. The solve runs on
+// the calling goroutine.
+func blockEntropy(psi []complex128, n, b int, rho []complex128) float64 {
+	if n < 4 || b < 2 || b >= n || n%b != 0 {
+		return 0
+	}
+	m := n / b
+	local := b * b
+	blocks := m * m
+	var norm float64
+	for _, z := range psi {
+		norm += real(z)*real(z) + imag(z)*imag(z)
+	}
+	if norm == 0 || math.IsNaN(norm) || math.IsInf(norm, 0) {
+		return 0
+	}
+	inv := 1 / norm
+	// Diagonalize the smaller factor. The entropy is the same either way.
+	if local <= blocks {
+		for l1 := 0; l1 < local; l1++ {
+			ly1, lx1 := l1/b, l1%b
+			for l2 := 0; l2 < local; l2++ {
+				ly2, lx2 := l2/b, l2%b
+				var re, im float64
+				for by := 0; by < m; by++ {
+					row1 := (by*b + ly1) * n
+					row2 := (by*b + ly2) * n
+					for bx := 0; bx < m; bx++ {
+						re1, im1 := real(psi[row1+bx*b+lx1]), imag(psi[row1+bx*b+lx1])
+						re2, im2 := real(psi[row2+bx*b+lx2]), imag(psi[row2+bx*b+lx2])
+						re += re1*re2 + im1*im2
+						im += im1*re2 - re1*im2
+					}
+				}
+				rho[l1*local+l2] = complex(re*inv, im*inv)
+			}
+		}
+		return entropyOfRho(rho, local)
+	}
+	for c1 := 0; c1 < blocks; c1++ {
+		by1, bx1 := c1/m, c1%m
+		for c2 := 0; c2 < blocks; c2++ {
+			by2, bx2 := c2/m, c2%m
+			var re, im float64
+			for ly := 0; ly < b; ly++ {
+				row1 := (by1*b+ly)*n + bx1*b
+				row2 := (by2*b+ly)*n + bx2*b
+				for lx := 0; lx < b; lx++ {
+					re1, im1 := real(psi[row1+lx]), imag(psi[row1+lx])
+					re2, im2 := real(psi[row2+lx]), imag(psi[row2+lx])
+					re += re1*re2 + im1*im2
+					im += im1*re2 - re1*im2
+				}
+			}
+			rho[c1*blocks+c2] = complex(re*inv, im*inv)
+		}
+	}
+	return entropyOfRho(rho, blocks)
+}
+
+// entropyOfRho is the von Neumann entropy of a side by side reduced state
+// already stored in rho, divided by log(side).
+func entropyOfRho(rho []complex128, side int) float64 {
+	if side <= 1 {
+		return 0
+	}
 	h := 0.0
-	for _, lam := range hermitianEigenvalues(rho, n) {
+	for _, lam := range hermitianEigenvalues(rho, side) {
 		if lam > 1e-15 {
 			h -= lam * math.Log(lam)
 		}
@@ -146,7 +242,7 @@ func vonNeumann(psi []complex128, n int, rho []complex128) float64 {
 	if math.IsNaN(h) || math.IsInf(h, 0) || h < 0 {
 		return 0
 	}
-	return h / math.Log(float64(n))
+	return h / math.Log(float64(side))
 }
 
 // hermitianEigenvalues returns the eigenvalues of the n by n Hermitian

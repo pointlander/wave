@@ -106,6 +106,115 @@ func TestVonNeumannEntropy(t *testing.T) {
 	}
 }
 
+func TestBlockEntropy(t *testing.T) {
+	n, b := 4, 2
+	rho := make([]complex128, n*n)
+	product := make([]complex128, n*n)
+	product[indexBL(n, b, 0, 1)] = 1
+	if h := blockEntropy(product, n, b, rho); h > 1e-8 {
+		t.Fatalf("product entropy %v", h)
+	}
+	if h := blockEntropy(make([]complex128, n*n), n, b, rho); h != 0 {
+		t.Fatalf("empty entropy %v", h)
+	}
+	bell := make([]complex128, n*n)
+	s := complex(1/math.Sqrt(2), 0)
+	bell[indexBL(n, b, 0, 0)] = s
+	bell[indexBL(n, b, 1, 1)] = s
+	want := math.Log(2) / math.Log(4)
+	if h := blockEntropy(bell, n, b, rho); math.Abs(h-want) > 1e-8 {
+		t.Fatalf("bell entropy %v, want %v", h, want)
+	}
+	maxed := make([]complex128, n*n)
+	diag := complex(0.5, 0)
+	for i := 0; i < 4; i++ {
+		maxed[indexBL(n, b, i, i)] = diag
+	}
+	if h := blockEntropy(maxed, n, b, rho); math.Abs(h-1) > 1e-8 {
+		t.Fatalf("maximally entangled entropy %v", h)
+	}
+
+	// Embed the 2×2 skew state in the block/offset cut. Extra eigenvalues
+	// are zero, and the normalizer is the full smaller factor.
+	scale := math.Sqrt(3)
+	skew := make([]complex128, n*n)
+	skew[indexBL(n, b, 0, 0)] = complex(1/scale, 0)
+	skew[indexBL(n, b, 1, 0)] = complex(1/scale, 0)
+	skew[indexBL(n, b, 1, 1)] = complex(1/scale, 0)
+	l1 := (3 + math.Sqrt(5)) / 6
+	l2 := (3 - math.Sqrt(5)) / 6
+	skewWant := -(l1*math.Log(l1) + l2*math.Log(l2)) / math.Log(4)
+	if h := blockEntropy(skew, n, b, rho); math.Abs(h-skewWant) > 1e-8 {
+		t.Fatalf("skew entropy %v, want %v", h, skewWant)
+	}
+}
+
+// indexBL maps a block index and an offset index to a row-major cell.
+func indexBL(n, b, block, local int) int {
+	m := n / b
+	by, bx := block/m, block%m
+	ly, lx := local/b, local%b
+	return (by*b+ly)*n + bx*b + lx
+}
+
+func TestTileQFTPreservesBlockEntropy(t *testing.T) {
+	n, b := 16, 8
+	rng := newRNG(1)
+	psi := make([]complex128, n*n)
+	for i := range psi {
+		psi[i] = complex(rng.NormFloat64(), rng.NormFloat64())
+	}
+	rho := make([]complex128, n*n)
+	before := blockEntropy(psi, n, b, rho)
+	tileQFT(psi, n, b)
+	after := blockEntropy(psi, n, b, rho)
+	if math.Abs(before-after) > 1e-8 {
+		t.Fatalf("block entropy %v, after tile QFT %v", before, after)
+	}
+}
+
+// tileQFT applies a 2D Fourier transform inside each b×b block.
+func tileQFT(a []complex128, n, b int) {
+	f := newFFT2(b)
+	tile := make([]complex128, b*b)
+	for y0 := 0; y0 < n; y0 += b {
+		for x0 := 0; x0 < n; x0 += b {
+			for ly := 0; ly < b; ly++ {
+				copy(tile[ly*b:(ly+1)*b], a[(y0+ly)*n+x0:(y0+ly)*n+x0+b])
+			}
+			f.transform(tile, false)
+			for ly := 0; ly < b; ly++ {
+				copy(a[(y0+ly)*n+x0:(y0+ly)*n+x0+b], tile[ly*b:(ly+1)*b])
+			}
+		}
+	}
+}
+
+func TestBlockEntropyTracksInterior(t *testing.T) {
+	cfg := testConfig()
+	cfg.Grid = 32
+	cfg.L = 1
+	cfg.Hbar = 0.01
+	cfg.Sigma = 0.015
+	packet := func(x, y, vx float64) Particle {
+		p := Particle{S: Spatial{X: x, Y: y, Mass: 1, Sigma: cfg.Sigma, VX: vx}}
+		p.SyncFrequency(cfg.Hbar)
+		return p
+	}
+	// Centers of two adjacent 8-cell blocks. Equal velocities give the
+	// same interior; a different carrier makes the interiors differ.
+	same := []Particle{packet(0.125, 0.125, 0), packet(0.375, 0.125, 0)}
+	differ := []Particle{packet(0.125, 0.125, 0), packet(0.375, 0.125, 0.4)}
+	_, hSame := measure(cfg, same)
+	_, hDiffer := measure(cfg, differ)
+	if hSame > 1e-6 {
+		t.Fatalf("matching interiors %v", hSame)
+	}
+	if hDiffer < hSame+0.05 {
+		t.Fatalf("matching %v, differing %v", hSame, hDiffer)
+	}
+}
+
 func TestFFTRoundtripAndDelta(t *testing.T) {
 	rng := newRNG(3)
 	n := 16
@@ -264,7 +373,7 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
 	}
 	if math.Abs(fitness(ahf)-ahf) > 1e-15 || math.Abs(fitness(thf)-thf) > 1e-15 {
-		t.Fatalf("fitness %v %v, frequency entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
+		t.Fatalf("fitness %v %v, block entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
 	}
 }
 
@@ -273,13 +382,13 @@ func TestFitnessIsFrequencyEntropy(t *testing.T) {
 		t.Fatalf("fitness = %v", got)
 	}
 	if fitness(0) != 0 {
-		t.Fatal("zero frequency entropy should be the best fitness")
+		t.Fatal("zero block entropy should be the best fitness")
 	}
 	if !math.IsInf(fitness(math.NaN()), 1) {
-		t.Fatal("non-finite frequency entropy should be the worst fitness")
+		t.Fatal("non-finite block entropy should be the worst fitness")
 	}
 	if !math.IsInf(fitness(-0.1), 1) {
-		t.Fatal("negative frequency entropy should be the worst fitness")
+		t.Fatal("negative block entropy should be the worst fitness")
 	}
 }
 
