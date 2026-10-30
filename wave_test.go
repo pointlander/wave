@@ -427,7 +427,7 @@ func TestRolloutContinuesFromBestSample(t *testing.T) {
 	p := Particle{S: Spatial{X: 0.5, Y: 0.5, VX: 0.1, Mass: 1, Sigma: cfg.Sigma}, F: Frequency{Phase: 0.2}}
 	p.SyncFrequency(cfg.Hbar)
 	from := []Particle{p}
-	samples, next := rolloutStep(cfg, newRNG(1), newEvaluator(cfg), from, from, 0, 0)
+	samples, next, _ := rolloutStep(cfg, newRNG(1), newEvaluator(cfg), from, from, 0, 0)
 	if len(samples) != rolloutBatch {
 		t.Fatalf("samples = %d", len(samples))
 	}
@@ -449,7 +449,7 @@ func TestRolloutContinuesFromBestSample(t *testing.T) {
 	}
 }
 
-func TestRolloutSamplesStayOutOfTheTree(t *testing.T) {
+func TestRolloutWinnerJoinsTheTree(t *testing.T) {
 	cfg := testConfig()
 	cfg.Iterations = 1
 	cfg.Rollout = 2
@@ -458,12 +458,38 @@ func TestRolloutSamplesStayOutOfTheTree(t *testing.T) {
 	p := Particle{S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
 	p.SyncFrequency(cfg.Hbar)
 	root, states := runMCTS(cfg, newRNG(1), []Particle{p}, 0, 0)
-	if len(root.children) != 1 || len(root.children[0].children) != 1 || len(root.children[0].children[0].children) != 0 {
-		t.Fatal("rollout samples were added to the tree")
-	}
 	if len(states) != 1+2+cfg.Rollout*rolloutBatch {
 		t.Fatalf("states = %d", len(states))
 	}
+	deeper := root.children[0].children[0]
+	if len(root.children) != 1 || len(root.children[0].children) != 1 || len(deeper.children) != 1 {
+		t.Fatal("expansion added more than the rollout winner")
+	}
+	winner := deeper.children[0]
+	if len(winner.children) != 1 || len(winner.children[0].children) != 0 {
+		t.Fatal("second rollout winner was not the only grafted child")
+	}
+	firstBatch := states[3 : 3+rolloutBatch]
+	secondBatch := states[3+rolloutBatch:]
+	if !mechanicsAgree(winner.particles, lowestSample(firstBatch).particles, cfg.L) {
+		t.Fatal("first grafted child is not the best rollout sample")
+	}
+	if !mechanicsAgree(winner.children[0].particles, lowestSample(secondBatch).particles, cfg.L) {
+		t.Fatal("second grafted child is not the best rollout sample")
+	}
+	if winner.visits != 1 || winner.children[0].visits != 1 {
+		t.Fatalf("grafted visits %d %d", winner.visits, winner.children[0].visits)
+	}
+}
+
+func lowestSample(samples []scoredState) scoredState {
+	best := samples[0]
+	for _, s := range samples[1:] {
+		if s.fit < best.fit {
+			best = s
+		}
+	}
+	return best
 }
 
 func TestSearchExpandsOneExtraPly(t *testing.T) {

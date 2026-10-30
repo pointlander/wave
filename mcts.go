@@ -7,8 +7,9 @@ package main
 import "math"
 
 // rolloutBatch is how many mutations one rollout step scores. The step
-// continues from the lowest score, and every sample remains a candidate.
-// Tree expansion still adds one mutation.
+// continues from the lowest score, and that winner is added to the tree.
+// The other samples remain candidates and are not expanded. Tree expansion
+// still adds one mutation.
 const rolloutBatch = 4
 
 // mctsNode is one mutated state in the search tree. mean is the average
@@ -184,17 +185,25 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 			value = deeper.fit
 		}
 		roll := deeper.particles
+		rollParent := deeper
 		for d := 0; d < cfg.Rollout; d++ {
-			samples, next := rolloutStep(cfg, rng, ev, roll, ref, px, py)
+			samples, next, nextFit := rolloutStep(cfg, rng, ev, roll, ref, px, py)
 			for _, s := range samples {
 				states = append(states, s)
 				if s.fit < value {
 					value = s.fit
 				}
 			}
+			winner := &mctsNode{
+				parent:    rollParent,
+				particles: next,
+				fit:       nextFit,
+			}
+			rollParent.children = append(rollParent.children, winner)
+			rollParent = winner
 			roll = next
 		}
-		for n := deeper; n != nil; n = n.parent {
+		for n := rollParent; n != nil; n = n.parent {
 			n.visits++
 			n.valueSum += value
 			n.mean = n.valueSum / float64(n.visits)
@@ -205,8 +214,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 
 // rolloutStep scores rolloutBatch mutations of from and continues from the
 // lowest score. The earliest sample wins a tie.
-func rolloutStep(cfg Config, rng *randRand, ev *evaluator, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle) {
-	var bestFit float64
+func rolloutStep(cfg Config, rng *randRand, ev *evaluator, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle, nextFit float64) {
 	for b := 0; b < rolloutBatch; b++ {
 		sample := cloneParticles(from)
 		mutate(cfg, rng, sample)
@@ -214,12 +222,12 @@ func rolloutStep(cfg Config, rng *randRand, ev *evaluator, from, ref []Particle,
 		_, hf := ev.score(sample)
 		fit := stateScore(cfg, hf, sample, ref)
 		samples = append(samples, scoredState{particles: sample, fit: fit})
-		if next == nil || fit < bestFit {
+		if next == nil || fit < nextFit {
 			next = sample
-			bestFit = fit
+			nextFit = fit
 		}
 	}
-	return samples, next
+	return samples, next, nextFit
 }
 
 // bestState returns the evaluated frame with the lowest score. The earliest
