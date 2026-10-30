@@ -27,7 +27,7 @@ type Config struct {
 	Iterations int     // MCTS iterations per step
 	Widen      float64 // progressive-widening coefficient
 	Explore    float64 // UCB exploration constant
-	Rollout    int     // mutations evaluated past each new child
+	Rollout    int     // rollout steps past each new child; each step keeps the best of rolloutBatch mutations
 	Gravity    float64
 	Softening  float64
 	Hbar       float64

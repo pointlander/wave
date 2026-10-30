@@ -418,6 +418,54 @@ func TestMCTSSelection(t *testing.T) {
 	}
 }
 
+func TestRolloutContinuesFromBestSample(t *testing.T) {
+	cfg := testConfig()
+	cfg.Gravity = 0
+	cfg.MutPos = 0.05
+	cfg.MutVel = 0.05
+	cfg.MutPhase = 0.3
+	p := Particle{S: Spatial{X: 0.5, Y: 0.5, VX: 0.1, Mass: 1, Sigma: cfg.Sigma}, F: Frequency{Phase: 0.2}}
+	p.SyncFrequency(cfg.Hbar)
+	from := []Particle{p}
+	samples, next := rolloutStep(cfg, newRNG(1), newEvaluator(cfg), from, from, 0, 0)
+	if len(samples) != rolloutBatch {
+		t.Fatalf("samples = %d", len(samples))
+	}
+	bestFit := samples[0].fit
+	for _, s := range samples[1:] {
+		if s.fit < bestFit {
+			bestFit = s.fit
+		}
+	}
+	continued := false
+	for _, s := range samples {
+		if s.fit == bestFit && mechanicsAgree(s.particles, next, cfg.L) {
+			continued = true
+			break
+		}
+	}
+	if !continued {
+		t.Fatal("rollout continued from a sample that was not the best")
+	}
+}
+
+func TestRolloutSamplesStayOutOfTheTree(t *testing.T) {
+	cfg := testConfig()
+	cfg.Iterations = 1
+	cfg.Rollout = 2
+	cfg.N = 1
+	cfg.Gravity = 0
+	p := Particle{S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}}
+	p.SyncFrequency(cfg.Hbar)
+	root, states := runMCTS(cfg, newRNG(1), []Particle{p}, 0, 0)
+	if len(root.children) != 1 || len(root.children[0].children) != 1 || len(root.children[0].children[0].children) != 0 {
+		t.Fatal("rollout samples were added to the tree")
+	}
+	if len(states) != 1+2+cfg.Rollout*rolloutBatch {
+		t.Fatalf("states = %d", len(states))
+	}
+}
+
 func TestSearchExpandsOneExtraPly(t *testing.T) {
 	cfg := testConfig()
 	cfg.Iterations = 1

@@ -6,6 +6,11 @@ package main
 
 import "math"
 
+// rolloutBatch is how many mutations one rollout step scores. The step
+// continues from the lowest score, and every sample remains a candidate.
+// Tree expansion still adds one mutation.
+const rolloutBatch = 4
+
 // mctsNode is one mutated state in the search tree. mean is the average
 // simulation return seen through this node. A simulation's return is the
 // lowest fitness reached while evaluating the new child and its rollout,
@@ -180,15 +185,14 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		}
 		roll := deeper.particles
 		for d := 0; d < cfg.Rollout; d++ {
-			roll = cloneParticles(roll)
-			mutate(cfg, rng, roll)
-			finishParticles(cfg, roll, px, py)
-			_, rhf := ev.score(roll)
-			rfit := stateScore(cfg, rhf, roll, ref)
-			states = append(states, scoredState{particles: roll, fit: rfit})
-			if rfit < value {
-				value = rfit
+			samples, next := rolloutStep(cfg, rng, ev, roll, ref, px, py)
+			for _, s := range samples {
+				states = append(states, s)
+				if s.fit < value {
+					value = s.fit
+				}
 			}
+			roll = next
 		}
 		for n := deeper; n != nil; n = n.parent {
 			n.visits++
@@ -197,6 +201,25 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		}
 	}
 	return root, states
+}
+
+// rolloutStep scores rolloutBatch mutations of from and continues from the
+// lowest score. The earliest sample wins a tie.
+func rolloutStep(cfg Config, rng *randRand, ev *evaluator, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle) {
+	var bestFit float64
+	for b := 0; b < rolloutBatch; b++ {
+		sample := cloneParticles(from)
+		mutate(cfg, rng, sample)
+		finishParticles(cfg, sample, px, py)
+		_, hf := ev.score(sample)
+		fit := stateScore(cfg, hf, sample, ref)
+		samples = append(samples, scoredState{particles: sample, fit: fit})
+		if next == nil || fit < bestFit {
+			next = sample
+			bestFit = fit
+		}
+	}
+	return samples, next
 }
 
 // bestState returns the evaluated frame with the lowest score. The earliest

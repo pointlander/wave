@@ -37,7 +37,7 @@ The field `Ψ` is the coherent sum of the packets. Two entropies are measured on
 
 The reported frequency entropy of a frame is `H_frequency`. Spatial entropy is measured and reported, and it does not enter the score. The search score is that frequency entropy plus `0.005` times the mean squared distance from the Newtonian proposal, measured in units of the mutation scales. Lower is better. A move is kept only when the drop in frequency entropy exceeds that charge, and the printed entropies do not include it. A non-finite frequency entropy is skipped.
 
-The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when no move pays for itself.
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation. Each rollout step scores 4 mutations and continues from the lowest score, and every sample remains a candidate. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when no move pays for itself.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
@@ -80,7 +80,7 @@ go run . -duration 30s -webm wave.webm -out frames
 | `-iters` | 48 | Monte Carlo iterations per step |
 | `-widen` | 1 | progressive widening coefficient |
 | `-explore` | 0.15 | UCB exploration constant |
-| `-rollout` | 1 | rollout mutations after each new node |
+| `-rollout` | 1 | rollout steps after each new node; each step keeps the best of 4 mutations |
 | `-seed` | 1 | random seed |
 | `-gravity` | 4.301e-6 | `G` in kpc M_sun⁻¹ (km/s)² |
 | `-softening` | 60 | Plummer softening length in kpc |
