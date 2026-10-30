@@ -123,16 +123,15 @@ type scoredState struct {
 }
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
-// The returned state merges the evaluated frames that share the lowest
-// score, weighted by its inverse. The score is the frequency entropy plus
-// a charge for leaving the Newtonian proposal. A worse frame does not move
-// the result. Reported entropies are measured on the merged frame and do
-// not include the charge. Spatial entropy is not part of the score.
+// The returned state is the single best-scoring frame. The score is the
+// frequency entropy plus a charge for leaving the Newtonian proposal.
+// Reported entropies are measured on that frame and do not include the
+// charge. Spatial entropy is not part of the score.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
 	_, states := runMCTS(cfg, rng, base, px, py)
-	merged := mergeStates(cfg, states, px, py)
-	hs, hf = newEvaluator(cfg).score(merged)
-	return merged, hs, hf
+	best = bestState(states)
+	hs, hf = newEvaluator(cfg).score(best)
+	return best, hs, hf
 }
 
 // runMCTS returns the tree and every state it scored, root first.
@@ -200,115 +199,29 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	return root, states
 }
 
-// ratioWeight is 1 / H_frequency. Zero frequency entropy takes the whole
-// step. A non-finite frequency entropy has no weight.
-func ratioWeight(fit float64) float64 {
-	if fit == 0 {
-		return math.Inf(1)
-	}
-	if fit < 0 || math.IsNaN(fit) || math.IsInf(fit, 0) {
-		return 0
-	}
-	return 1 / fit
-}
-
-// mergeStates averages the evaluated frames that share the lowest frequency
-// entropy. A worse frame does not move the result, so a Newtonian proposal
-// that has the best frequency entropy is returned unchanged. Positions and
-// phases use the circular mean. Velocities are linear. Total momentum is
-// then restored to (px, py).
-func mergeStates(cfg Config, states []scoredState, px, py float64) []Particle {
+// bestState returns the evaluated frame with the lowest score. The earliest
+// frame wins a tie, and the Newtonian proposal is evaluated first. A
+// non-finite score is skipped. When every score is non-finite, the first
+// frame is returned.
+func bestState(states []scoredState) []Particle {
 	if len(states) == 0 {
 		return nil
 	}
+	best := -1
 	bestFit := math.Inf(1)
-	for _, s := range states {
-		if !math.IsNaN(s.fit) && s.fit < bestFit {
+	for i, s := range states {
+		if math.IsNaN(s.fit) || math.IsInf(s.fit, 0) {
+			continue
+		}
+		if best < 0 || s.fit < bestFit {
+			best = i
 			bestFit = s.fit
 		}
 	}
-	chosen := make([]scoredState, 0, len(states))
-	weights := make([]float64, 0, len(states))
-	perfect := false
-	for _, s := range states {
-		if math.IsNaN(s.fit) || s.fit > bestFit {
-			continue
-		}
-		w := ratioWeight(s.fit)
-		if math.IsInf(w, 1) {
-			if !perfect {
-				chosen = chosen[:0]
-				weights = weights[:0]
-				perfect = true
-			}
-			chosen = append(chosen, s)
-			weights = append(weights, 1)
-			continue
-		}
-		if perfect || w <= 0 || math.IsNaN(w) {
-			continue
-		}
-		chosen = append(chosen, s)
-		weights = append(weights, w)
+	if best < 0 {
+		best = 0
 	}
-	if len(chosen) == 0 {
-		out := cloneParticles(states[0].particles)
-		restoreMomentum(out, px, py)
-		for i := range out {
-			out[i].SyncFrequency(cfg.Hbar)
-		}
-		return out
-	}
-	out := cloneParticles(chosen[0].particles)
-	n := len(out)
-	xs := make([]float64, len(chosen))
-	ys := make([]float64, len(chosen))
-	ph := make([]float64, len(chosen))
-	for i := 0; i < n; i++ {
-		var vx, vy, wsum float64
-		for k, s := range chosen {
-			xs[k] = s.particles[i].S.X
-			ys[k] = s.particles[i].S.Y
-			ph[k] = s.particles[i].F.Phase
-			vx += weights[k] * s.particles[i].S.VX
-			vy += weights[k] * s.particles[i].S.VY
-			wsum += weights[k]
-		}
-		out[i].S.X = circularMean(xs, weights, cfg.L)
-		out[i].S.Y = circularMean(ys, weights, cfg.L)
-		out[i].S.VX = vx / wsum
-		out[i].S.VY = vy / wsum
-		out[i].F.Phase = circularMean(ph, weights, 2*math.Pi)
-	}
-	restoreMomentum(out, px, py)
-	for i := range out {
-		out[i].SyncFrequency(cfg.Hbar)
-	}
-	return out
-}
-
-// circularMean is the weighted mean of values on a circle of the given period.
-func circularMean(values, weights []float64, period float64) float64 {
-	var s, c float64
-	for i, v := range values {
-		ang := 2 * math.Pi * v / period
-		s += weights[i] * math.Sin(ang)
-		c += weights[i] * math.Cos(ang)
-	}
-	if s*s+c*c < 1e-24 {
-		best := 0
-		for i := 1; i < len(weights); i++ {
-			if weights[i] > weights[best] {
-				best = i
-			}
-		}
-		return values[best]
-	}
-	ang := math.Atan2(s, c)
-	if ang < 0 {
-		ang += 2 * math.Pi
-	}
-	return ang * period / (2 * math.Pi)
+	return cloneParticles(states[best].particles)
 }
 
 // departureCost is the frequency entropy charged for a mean squared

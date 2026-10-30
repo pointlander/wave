@@ -149,7 +149,7 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is the frequency entropy of the merged frame. Spatial entropy is
+// Fitness is the frequency entropy of the accepted frame. Spatial entropy is
 // recorded and is not part of the score. Agree is true when that frame
 // matches the Newtonian proposal. AgreeCount and AgreeRate accumulate that
 // comparison over the run.
@@ -184,12 +184,12 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	}, nil
 }
 
-// Step roots a Monte Carlo tree search at a Newtonian proposal and merges
-// the frames with the lowest score. The score is the frequency entropy plus
-// a charge for leaving the proposal, so a small entropy drop does not move
-// the galaxies. A worse frame does not move the result. Reported entropy is
-// measured on the current frame and does not include the charge. Spatial
-// entropy is not part of the score. Momentum is held at the value of ps.
+// Step roots a Monte Carlo tree search at a Newtonian proposal and keeps the
+// single best-scoring frame. The score is the frequency entropy plus a
+// charge for leaving the proposal, so a small entropy drop does not move
+// the galaxies. Reported entropy is measured on the accepted frame and does
+// not include the charge. Spatial entropy is not part of the score.
+// Momentum is held at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, StepResult{}, err

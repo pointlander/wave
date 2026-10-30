@@ -6,8 +6,7 @@
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
 // then searches around that proposal. The score is frequency entropy plus
-// a charge for leaving that proposal. Frames that share the lowest score
-// are merged by its inverse.
+// a charge for leaving that proposal. The lowest-scoring frame is kept.
 package main
 
 import (
@@ -62,8 +61,8 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
 		fmt.Fprintf(os.Stderr, "The score is frequency entropy plus a charge for leaving the\n")
-		fmt.Fprintf(os.Stderr, "Newtonian proposal. Frames that share the lowest score are merged\n")
-		fmt.Fprintf(os.Stderr, "by its inverse. Spatial entropy is not scored. A worse frame is left out.\n\n")
+		fmt.Fprintf(os.Stderr, "Newtonian proposal. The lowest-scoring frame is kept.\n")
+		fmt.Fprintf(os.Stderr, "Spatial entropy is not scored.\n\n")
 		fmt.Fprintf(os.Stderr, "Lengths are kpc, masses are solar masses, velocities are km/s,\n")
 		fmt.Fprintf(os.Stderr, "and displayed time is Gyr. Energy is M_sun (km/s)^2.\n\n")
 		fmt.Fprintf(os.Stderr, "Frames show |Ψ|² on the left and |Ψ̂|² on the right.\n")

@@ -349,7 +349,7 @@ func TestMergedStepKeepsMomentumAndField(t *testing.T) {
 	}
 }
 
-func TestMergeWeights(t *testing.T) {
+func TestBestState(t *testing.T) {
 	cfg := testConfig()
 	cfg.L = 1
 	body := func(x0, x1, vx float64) []Particle {
@@ -364,37 +364,31 @@ func TestMergeWeights(t *testing.T) {
 		{particles: best, fit: 0.5},
 		{particles: body(0.90, 0.90, 5), fit: math.Inf(1)},
 	}
-	got := mergeStates(cfg, states, 0, 0)
+	got := bestState(states)
 	if !mechanicsAgree(got, best, cfg.L) {
-		t.Fatalf("worse frames moved the best state to %v %v", got[0].S.X, got[0].S.VX)
+		t.Fatalf("kept %v %v instead of the best state", got[0].S.X, got[0].S.VX)
 	}
-	px, py := momentum(got)
-	if math.Abs(px) > 1e-12 || math.Abs(py) > 1e-12 {
-		t.Fatalf("momentum %v %v", px, py)
-	}
+	first := body(0.20, 0.40, 0.10)
 	tied := []scoredState{
-		{particles: body(0.20, 0.40, 0.10), fit: 0.5},
+		{particles: first, fit: 0.5},
 		{particles: body(0.32, 0.50, 0.25), fit: 0.5},
 	}
-	blend := mergeStates(cfg, tied, 0, 0)
-	// Equal frequency entropies: circular mean of 0.20 and 0.32, linear mean of the velocities.
-	if math.Abs(blend[0].S.X-0.26) > 1e-12 || math.Abs(blend[0].S.VX-0.175) > 1e-12 {
-		t.Fatalf("tied merge %v %v", blend[0].S.X, blend[0].S.VX)
+	kept := bestState(tied)
+	if !mechanicsAgree(kept, first, cfg.L) {
+		t.Fatalf("tie kept %v %v", kept[0].S.X, kept[0].S.VX)
 	}
-
-	across := []scoredState{
-		{particles: body(0.05, 0.5, 0), fit: 1},
-		{particles: body(0.95, 0.5, 0), fit: 1},
+	onlyInf := []scoredState{
+		{particles: first, fit: math.Inf(1)},
+		{particles: best, fit: math.NaN()},
 	}
-	wrapped := mergeStates(cfg, across, 0, 0)
-	if wrapped[0].S.X > 0.02 && wrapped[0].S.X < 0.98 {
-		t.Fatalf("boundary mean landed in the interior: %v", wrapped[0].S.X)
+	fallback := bestState(onlyInf)
+	if !mechanicsAgree(fallback, first, cfg.L) {
+		t.Fatal("non-finite scores did not fall back to the first frame")
 	}
-
 	perfect := append(states, scoredState{particles: body(0.80, 0.70, 0.3), fit: 0})
-	only := mergeStates(cfg, perfect, 0, 0)
+	only := bestState(perfect)
 	if math.Abs(only[0].S.X-0.80) > 1e-9 || math.Abs(only[1].S.X-0.70) > 1e-9 {
-		t.Fatalf("zero frequency entropy did not take the step: %v %v", only[0].S.X, only[1].S.X)
+		t.Fatalf("zero score did not win: %v %v", only[0].S.X, only[1].S.X)
 	}
 }
 
