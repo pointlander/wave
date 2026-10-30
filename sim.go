@@ -82,7 +82,7 @@ func DefaultConfig() Config {
 		Iterations: 48,
 		Widen:      1,
 		Explore:    0.15,
-		Rollout:    1,
+		Rollout:    2,
 		Gravity:    newtonG,
 		Softening:  modelSoft * boxKpc,
 		Hbar:       modelHbar * boxKpc * v,
