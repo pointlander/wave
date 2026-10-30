@@ -4,7 +4,11 @@
 
 package main
 
-import "math"
+import (
+	"math"
+	"runtime"
+	"sync"
+)
 
 // rolloutBatch is how many mutations one rollout step scores. The step
 // continues from the lowest score, and that winner is added to the tree.
@@ -128,6 +132,96 @@ type scoredState struct {
 	fit       float64
 }
 
+// scorePair is one frame's entropies. The Jacobi solve that produces it
+// stays on a single goroutine; the pool only runs several frames at once.
+type scorePair struct {
+	hs, hf float64
+}
+
+type scoreJob struct {
+	ps     []Particle
+	hs, hf float64
+	wg     *sync.WaitGroup
+}
+
+// scorePool scores independent frames concurrently. Each worker owns its
+// evaluator. With one GOMAXPROCS the pool scores on the caller.
+type scorePool struct {
+	cfg  Config
+	ev   *evaluator
+	jobs chan *scoreJob
+	quit chan struct{}
+	wg   sync.WaitGroup
+}
+
+func newScorePool(cfg Config) *scorePool {
+	p := &scorePool{cfg: cfg}
+	n := runtime.GOMAXPROCS(0)
+	if n < 2 {
+		p.ev = newEvaluator(cfg)
+		return p
+	}
+	p.jobs = make(chan *scoreJob)
+	p.quit = make(chan struct{})
+	for i := 0; i < n; i++ {
+		ev := newEvaluator(cfg)
+		p.wg.Add(1)
+		go p.worker(ev)
+	}
+	return p
+}
+
+func (p *scorePool) stop() {
+	if p.quit == nil {
+		return
+	}
+	close(p.quit)
+	p.wg.Wait()
+}
+
+func (p *scorePool) worker(ev *evaluator) {
+	defer p.wg.Done()
+	for {
+		select {
+		case <-p.quit:
+			return
+		case job := <-p.jobs:
+			job.hs, job.hf = ev.score(job.ps)
+			job.wg.Done()
+		}
+	}
+}
+
+func (p *scorePool) scoreAll(frames [][]Particle) []scorePair {
+	out := make([]scorePair, len(frames))
+	if p.jobs == nil {
+		for i, ps := range frames {
+			out[i].hs, out[i].hf = p.ev.score(ps)
+		}
+		return out
+	}
+	var wg sync.WaitGroup
+	wg.Add(len(frames))
+	jobs := make([]scoreJob, len(frames))
+	for i, ps := range frames {
+		jobs[i] = scoreJob{ps: ps, wg: &wg}
+		p.jobs <- &jobs[i]
+	}
+	wg.Wait()
+	for i := range jobs {
+		out[i].hs = jobs[i].hs
+		out[i].hf = jobs[i].hf
+	}
+	return out
+}
+
+func mutateFinished(cfg Config, rng *randRand, from []Particle, px, py float64) []Particle {
+	sample := cloneParticles(from)
+	mutate(cfg, rng, sample)
+	finishParticles(cfg, sample, px, py)
+	return sample
+}
+
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
 // The returned state is the single best-scoring frame. The score is the
 // frequency entropy plus a charge for leaving the Newtonian proposal.
@@ -141,10 +235,16 @@ func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []
 }
 
 // runMCTS returns the tree and every state it scored, root first.
+// One iteration still expands one child, expands that child once more,
+// then rolls out. The two new plies and the first rollout batch do not
+// depend on each other's scores, so they are scored together.
 func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *mctsNode, states []scoredState) {
-	ev := newEvaluator(cfg)
+	pool := newScorePool(cfg)
+	defer pool.stop()
+
 	root = &mctsNode{particles: cloneParticles(base)}
-	root.hs, root.hf = ev.score(root.particles)
+	rootPair := pool.scoreAll([][]Particle{root.particles})[0]
+	root.hs, root.hf = rootPair.hs, rootPair.hf
 	ref := root.particles
 	root.fit = stateScore(cfg, root.hf, root.particles, ref)
 	root.visits = 1
@@ -152,56 +252,73 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	root.mean = root.fit
 	states = append(states, scoredState{particles: root.particles, fit: root.fit})
 
-	expand := func(parent *mctsNode) *mctsNode {
-		childP := cloneParticles(parent.particles)
-		mutate(cfg, rng, childP)
-		finishParticles(cfg, childP, px, py)
-		chs, chf := ev.score(childP)
-		cfit := stateScore(cfg, chf, childP, ref)
-		child := &mctsNode{
-			parent:    parent,
-			particles: childP,
-			hs:        chs,
-			hf:        chf,
-			fit:       cfit,
-		}
-		states = append(states, scoredState{particles: childP, fit: cfit})
-		parent.children = append(parent.children, child)
-		return child
-	}
-
 	for i := 0; i < cfg.Iterations; i++ {
 		node := root
 		for len(node.children) >= maxChildren(cfg.Widen, node.visits) && len(node.children) > 0 {
 			node = selectChild(cfg, node)
 		}
-		// Expand the selected node, then one ply further, so the tree
-		// keeps the next mutation instead of leaving it to the rollout.
-		child := expand(node)
-		deeper := expand(child)
-
-		value := child.fit
-		if deeper.fit < value {
-			value = deeper.fit
+		// Draw the next two plies, and the first rollout batch, before
+		// scoring. None of those draws read a score, so the random
+		// stream matches a serial iteration.
+		childP := mutateFinished(cfg, rng, node.particles, px, py)
+		deeperP := mutateFinished(cfg, rng, childP, px, py)
+		frames := [][]Particle{childP, deeperP}
+		var first [][]Particle
+		if cfg.Rollout > 0 {
+			first = make([][]Particle, rolloutBatch)
+			for b := range first {
+				first[b] = mutateFinished(cfg, rng, deeperP, px, py)
+			}
+			frames = append(frames, first...)
 		}
-		roll := deeper.particles
+		scored := pool.scoreAll(frames)
+
+		cfit := stateScore(cfg, scored[0].hf, childP, ref)
+		child := &mctsNode{
+			parent:    node,
+			particles: childP,
+			hs:        scored[0].hs,
+			hf:        scored[0].hf,
+			fit:       cfit,
+		}
+		node.children = append(node.children, child)
+		states = append(states, scoredState{particles: childP, fit: cfit})
+
+		dfit := stateScore(cfg, scored[1].hf, deeperP, ref)
+		deeper := &mctsNode{
+			parent:    child,
+			particles: deeperP,
+			hs:        scored[1].hs,
+			hf:        scored[1].hf,
+			fit:       dfit,
+		}
+		child.children = append(child.children, deeper)
+		states = append(states, scoredState{particles: deeperP, fit: dfit})
+
+		value := cfit
+		if dfit < value {
+			value = dfit
+		}
 		rollParent := deeper
-		for d := 0; d < cfg.Rollout; d++ {
-			samples, next, nextFit := rolloutStep(cfg, rng, ev, roll, ref, px, py)
-			for _, s := range samples {
-				states = append(states, s)
-				if s.fit < value {
-					value = s.fit
-				}
-			}
-			winner := &mctsNode{
-				parent:    rollParent,
-				particles: next,
-				fit:       nextFit,
-			}
+		if len(first) > 0 {
+			next, nextFit, v := adoptBatch(first, scored[2:], ref, cfg, &states, value)
+			value = v
+			winner := &mctsNode{parent: rollParent, particles: next, fit: nextFit}
 			rollParent.children = append(rollParent.children, winner)
 			rollParent = winner
-			roll = next
+			for d := 1; d < cfg.Rollout; d++ {
+				samples, nxt, nxtFit := rolloutStep(cfg, rng, pool, next, ref, px, py)
+				for _, s := range samples {
+					states = append(states, s)
+					if s.fit < value {
+						value = s.fit
+					}
+				}
+				w := &mctsNode{parent: rollParent, particles: nxt, fit: nxtFit}
+				rollParent.children = append(rollParent.children, w)
+				rollParent = w
+				next = nxt
+			}
 		}
 		for n := rollParent; n != nil; n = n.parent {
 			n.visits++
@@ -212,18 +329,47 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	return root, states
 }
 
-// rolloutStep scores rolloutBatch mutations of from and continues from the
-// lowest score. The earliest sample wins a tie.
-func rolloutStep(cfg Config, rng *randRand, ev *evaluator, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle, nextFit float64) {
-	for b := 0; b < rolloutBatch; b++ {
-		sample := cloneParticles(from)
-		mutate(cfg, rng, sample)
-		finishParticles(cfg, sample, px, py)
-		_, hf := ev.score(sample)
-		fit := stateScore(cfg, hf, sample, ref)
-		samples = append(samples, scoredState{particles: sample, fit: fit})
+// adoptBatch records a rollout batch in draw order and returns the lowest
+// score. The earliest sample wins a tie. states and value are updated.
+func adoptBatch(frames [][]Particle, scored []scorePair, ref []Particle, cfg Config, states *[]scoredState, value float64) (next []Particle, nextFit, newValue float64) {
+	newValue = value
+	for i, ps := range frames {
+		fit := stateScore(cfg, scored[i].hf, ps, ref)
+		*states = append(*states, scoredState{particles: ps, fit: fit})
+		if fit < newValue {
+			newValue = fit
+		}
 		if next == nil || fit < nextFit {
-			next = sample
+			next = ps
+			nextFit = fit
+		}
+	}
+	return next, nextFit, newValue
+}
+
+// rolloutStep scores rolloutBatch mutations of from and continues from the
+// lowest score. The earliest sample wins a tie. A nil pool scores on the
+// caller; otherwise the batch is scored concurrently.
+func rolloutStep(cfg Config, rng *randRand, pool *scorePool, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle, nextFit float64) {
+	frames := make([][]Particle, rolloutBatch)
+	for b := range frames {
+		frames[b] = mutateFinished(cfg, rng, from, px, py)
+	}
+	var scored []scorePair
+	if pool == nil {
+		ev := newEvaluator(cfg)
+		scored = make([]scorePair, len(frames))
+		for i, ps := range frames {
+			scored[i].hs, scored[i].hf = ev.score(ps)
+		}
+	} else {
+		scored = pool.scoreAll(frames)
+	}
+	for i, ps := range frames {
+		fit := stateScore(cfg, scored[i].hf, ps, ref)
+		samples = append(samples, scoredState{particles: ps, fit: fit})
+		if next == nil || fit < nextFit {
+			next = ps
 			nextFit = fit
 		}
 	}
