@@ -4,17 +4,21 @@
 
 package main
 
-import "math"
+import (
+	"math"
+	"math/cmplx"
+)
 
 const packetTail = 4.5
 
-// evaluator rasterizes the coherent wave field and scores the entropy of
-// its quantum Fourier transform.
+// evaluator rasterizes the coherent wave field and measures the von Neumann
+// entropy of Ψ and of its discrete Fourier transform.
 type evaluator struct {
 	cfg     Config
 	fft     fft2
 	field   []complex128
 	scratch []complex128
+	rho     []complex128
 }
 
 func newEvaluator(cfg Config) *evaluator {
@@ -24,6 +28,7 @@ func newEvaluator(cfg Config) *evaluator {
 		fft:     newFFT2(cfg.Grid),
 		field:   make([]complex128, n),
 		scratch: make([]complex128, n),
+		rho:     make([]complex128, n),
 	}
 }
 
@@ -73,16 +78,16 @@ func (e *evaluator) render(ps []Particle) {
 	}
 }
 
-// score returns the Shannon entropy of |Ψ|² and the Shannon entropy of the
-// power after a quantum Fourier transform of the whole grid. hs is reported.
-// hf is the search score. Both are divided by the log of the number of
-// cells, so a single occupied bin scores 0 and a flat distribution scores 1.
+// score returns the von Neumann entanglement of Ψ and of its discrete
+// Fourier transform. Both cuts are between x and y, divided by log(grid).
+// hf is the search score, measured after the transform.
 func (e *evaluator) score(ps []Particle) (hs, hf float64) {
+	g := e.cfg.Grid
 	e.render(ps)
-	hs = shannon(e.field)
+	hs = vonNeumann(e.field, g, e.rho)
 	copy(e.scratch, e.field)
 	e.fft.transform(e.scratch, false)
-	return hs, shannon(e.scratch)
+	return hs, vonNeumann(e.scratch, g, e.rho)
 }
 
 // densityAndSpectrum returns |Ψ|² and the fftshifted spectral power
@@ -103,32 +108,120 @@ func (e *evaluator) densityAndSpectrum(ps []Particle) (density, spectrum []float
 	return density, fftShift(power, g)
 }
 
-// shannon is the Shannon entropy of the normalized power |z|², divided by
-// log of the number of bins. One occupied bin scores 0 and a flat
-// distribution scores 1. An empty field scores 0.
-func shannon(a []complex128) float64 {
-	if len(a) <= 1 {
+// vonNeumann is the entanglement entropy between the two axes of psi,
+// divided by log(n). psi is row-major n by n. A product wave scores 0 and
+// a maximally entangled wave scores 1. rho is an n*n scratch buffer.
+// The solve runs on the calling goroutine.
+func vonNeumann(psi []complex128, n int, rho []complex128) float64 {
+	if n <= 1 {
 		return 0
 	}
 	var norm float64
-	for _, z := range a {
+	for _, z := range psi {
 		norm += real(z)*real(z) + imag(z)*imag(z)
 	}
 	if norm == 0 || math.IsNaN(norm) || math.IsInf(norm, 0) {
 		return 0
 	}
 	inv := 1 / norm
+	for y1 := 0; y1 < n; y1++ {
+		row1 := y1 * n
+		for y2 := 0; y2 < n; y2++ {
+			row2 := y2 * n
+			var re, im float64
+			for x := 0; x < n; x++ {
+				re1, im1 := real(psi[row1+x]), imag(psi[row1+x])
+				re2, im2 := real(psi[row2+x]), imag(psi[row2+x])
+				re += re1*re2 + im1*im2
+				im += im1*re2 - re1*im2
+			}
+			rho[y1*n+y2] = complex(re*inv, im*inv)
+		}
+	}
 	h := 0.0
-	for _, z := range a {
-		p := (real(z)*real(z) + imag(z)*imag(z)) * inv
-		if p > 0 {
-			h -= p * math.Log(p)
+	for _, lam := range hermitianEigenvalues(rho, n) {
+		if lam > 1e-15 {
+			h -= lam * math.Log(lam)
 		}
 	}
 	if math.IsNaN(h) || math.IsInf(h, 0) || h < 0 {
 		return 0
 	}
-	return h / math.Log(float64(len(a)))
+	return h / math.Log(float64(n))
+}
+
+// hermitianEigenvalues returns the eigenvalues of the n by n Hermitian
+// matrix a, overwriting a. Jacobi rotations drive the off-diagonal entries
+// to zero.
+func hermitianEigenvalues(a []complex128, n int) []float64 {
+	const tol = 1e-14
+	for sweep := 0; sweep < 40; sweep++ {
+		off := 0.0
+		for p := 0; p < n; p++ {
+			for q := p + 1; q < n; q++ {
+				off += cmplx.Abs(a[p*n+q])
+			}
+		}
+		if off <= tol {
+			break
+		}
+		for p := 0; p < n; p++ {
+			for q := p + 1; q < n; q++ {
+				jacobiHermitian(a, n, p, q)
+			}
+		}
+	}
+	ev := make([]float64, n)
+	for i := 0; i < n; i++ {
+		ev[i] = real(a[i*n+i])
+	}
+	return ev
+}
+
+// jacobiHermitian zeros a[p,q] with a unitary rotation in the p-q plane.
+func jacobiHermitian(a []complex128, n, p, q int) {
+	apq := a[p*n+q]
+	mag := cmplx.Abs(apq)
+	if mag < 1e-15 {
+		return
+	}
+	// Remove the phase of a[p,q] by a diagonal unitary on q.
+	ph := apq / complex(mag, 0)
+	conj := cmplx.Conj(ph)
+	for k := 0; k < n; k++ {
+		if k == q {
+			continue
+		}
+		a[k*n+q] *= conj
+		a[q*n+k] *= ph
+	}
+	a[q*n+q] = complex(real(a[q*n+q]), 0)
+	app := real(a[p*n+p])
+	aqq := real(a[q*n+q])
+	tau := (aqq - app) / (2 * mag)
+	var t float64
+	if tau >= 0 {
+		t = 1 / (tau + math.Hypot(1, tau))
+	} else {
+		t = -1 / (-tau + math.Hypot(1, tau))
+	}
+	c := 1 / math.Hypot(1, t)
+	s := t * c
+	for k := 0; k < n; k++ {
+		if k == p || k == q {
+			continue
+		}
+		kp := a[k*n+p]
+		kq := a[k*n+q]
+		a[k*n+p] = complex(c, 0)*kp - complex(s, 0)*kq
+		a[k*n+q] = complex(s, 0)*kp + complex(c, 0)*kq
+		a[p*n+k] = cmplx.Conj(a[k*n+p])
+		a[q*n+k] = cmplx.Conj(a[k*n+q])
+	}
+	a[p*n+p] = complex(app-t*mag, 0)
+	a[q*n+q] = complex(aqq+t*mag, 0)
+	a[p*n+q] = 0
+	a[q*n+p] = 0
 }
 
 func fftShift(v []float64, n int) []float64 {
