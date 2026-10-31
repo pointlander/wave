@@ -192,8 +192,9 @@ func mutateFinished(cfg Config, rng *randRand, from []Particle, px, py float64) 
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
 // The returned state is the single best-scoring frame. The score is the
-// Shannon entropy of the quantum Fourier transform of Ψ. Spatial entropy
-// is not part of the score.
+// von Neumann entropy of the discrete Fourier transform of Ψ. The reported
+// spatial value is the von Neumann entanglement of Ψ and is not part of
+// the score.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
 	_, states := runMCTS(cfg, rng, base, px, py)
 	best = bestState(states)
@@ -367,7 +368,7 @@ func bestState(states []scoredState) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// fitness is the Shannon entropy of the quantum Fourier transform of Ψ.
+// fitness is the von Neumann entropy of the discrete Fourier transform of Ψ.
 // Lower is better. Spatial entropy is not part of the score. A non-finite
 // entropy scores +Inf.
 func fitness(hf float64) float64 {

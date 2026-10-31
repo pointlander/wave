@@ -30,11 +30,9 @@ Each galaxy is a Gaussian envelope of width `σ` centered at `(X, Y)`, moving wi
 - spectral width `σ_k = 1 / (2σ)`
 - an internal phase `φ`
 
-The field `Ψ` is the coherent sum of the packets. `H_spatial` is the Shannon entropy of `|Ψ|²`, divided by `log` of the number of cells. One occupied cell scores 0 and a flat field scores 1.
+The field `Ψ` is the coherent sum of the packets. `H_spatial` is the von Neumann entropy of the entanglement between `x` and `y`, divided by `log(grid)`. A product wave scores 0 and a maximally entangled wave scores 1.
 
-`H_frequency` is the Shannon entropy of the power in the quantum Fourier transform of the whole grid, divided by `log` of the number of cells. A spectrum in a single bin scores 0 and a flat spectrum scores 1.
-
-Spatial entropy is measured and reported, and it does not enter the score. The search score is `H_frequency`. Lower is better. A non-finite frequency entropy is skipped.
+`H_frequency` is the von Neumann entropy of the discrete Fourier transform of the whole grid, with the same x–y cut and the same `log(grid)` normalization. The transform is one discrete Fourier transform on each axis, so this entropy matches `H_spatial`. The search score is `H_frequency`. Lower is better. A non-finite frequency entropy is skipped.
 
 The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when it shares the lowest score.
 

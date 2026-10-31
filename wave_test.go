@@ -64,50 +64,94 @@ func TestMinImage(t *testing.T) {
 	}
 }
 
-func TestShannonPower(t *testing.T) {
-	spike := make([]complex128, 4)
-	spike[2] = 1
-	if h := shannon(spike); h > 1e-12 {
-		t.Fatalf("spike entropy %v", h)
+func TestVonNeumannEntropy(t *testing.T) {
+	n := 4
+	rho := make([]complex128, n*n)
+	product := make([]complex128, n*n)
+	product[1*n+0] = 1
+	if h := vonNeumann(product, n, rho); h > 1e-8 {
+		t.Fatalf("product entropy %v", h)
 	}
-	if h := shannon(nil); h != 0 {
+	if h := vonNeumann(make([]complex128, n*n), n, rho); h != 0 {
 		t.Fatalf("empty entropy %v", h)
 	}
-	flat := []complex128{1, 1, 1, 1}
-	if math.Abs(shannon(flat)-1) > 1e-12 {
-		t.Fatalf("flat entropy %v", shannon(flat))
+	bell := make([]complex128, n*n)
+	s := complex(1/math.Sqrt(2), 0)
+	bell[0] = s
+	bell[1*n+1] = s
+	want := math.Log(2) / math.Log(float64(n))
+	if h := vonNeumann(bell, n, rho); math.Abs(h-want) > 1e-8 {
+		t.Fatalf("bell entropy %v, want %v", h, want)
 	}
-	half := []complex128{1, 0, 1, 0}
-	if math.Abs(shannon(half)-0.5) > 1e-12 {
-		t.Fatalf("two-bin entropy %v", shannon(half))
+	maxed := make([]complex128, n*n)
+	diag := complex(1/math.Sqrt(float64(n)), 0)
+	for i := 0; i < n; i++ {
+		maxed[i*n+i] = diag
+	}
+	if h := vonNeumann(maxed, n, rho); math.Abs(h-1) > 1e-8 {
+		t.Fatalf("maximally entangled entropy %v", h)
+	}
+
+	// These two columns are not orthogonal, so the rotation has to mix them.
+	scale := math.Sqrt(3)
+	skew := []complex128{
+		complex(1/scale, 0), complex(1/scale, 0),
+		0, complex(1/scale, 0),
+	}
+	l1 := (3 + math.Sqrt(5)) / 6
+	l2 := (3 - math.Sqrt(5)) / 6
+	skewWant := -(l1*math.Log(l1) + l2*math.Log(l2)) / math.Log(2)
+	if h := vonNeumann(skew, 2, make([]complex128, 4)); math.Abs(h-skewWant) > 1e-8 {
+		t.Fatalf("skew entropy %v, want %v", h, skewWant)
 	}
 }
 
-func TestFullQFTEntropy(t *testing.T) {
+func TestDFTPreservesVonNeumann(t *testing.T) {
 	cfg := testConfig()
 	cfg.Grid = 8
 	ev := newEvaluator(cfg)
+	n := cfg.Grid
+	check := func(name string) {
+		t.Helper()
+		hs := vonNeumann(ev.field, n, ev.rho)
+		copy(ev.scratch, ev.field)
+		ev.fft.transform(ev.scratch, false)
+		hf := vonNeumann(ev.scratch, n, ev.rho)
+		if math.Abs(hs-hf) > 1e-8 {
+			t.Fatalf("%s entropy %v -> %v", name, hs, hf)
+		}
+	}
+	rng := newRNG(1)
 	for i := range ev.field {
-		ev.field[i] = 1
+		ev.field[i] = complex(rng.NormFloat64(), rng.NormFloat64())
 	}
-	copy(ev.scratch, ev.field)
-	ev.fft.transform(ev.scratch, false)
-	// A constant field transforms to one DC bin.
-	if h := shannon(ev.scratch); h > 1e-9 {
-		t.Fatalf("constant field entropy %v", h)
-	}
+	check("random")
+
 	for i := range ev.field {
 		ev.field[i] = 0
 	}
-	ev.field[0] = 1
-	copy(ev.scratch, ev.field)
-	ev.fft.transform(ev.scratch, false)
-	// A spike transforms to a flat spectrum.
-	if h := shannon(ev.scratch); math.Abs(h-1) > 1e-9 {
-		t.Fatalf("spike entropy %v", h)
+	ev.field[3*n+1] = 1
+	check("spike")
+
+	for i := range ev.field {
+		ev.field[i] = 1
 	}
+	check("constant")
+
+	s := complex(1/math.Sqrt(2), 0)
+	for i := range ev.field {
+		ev.field[i] = 0
+	}
+	ev.field[0] = s
+	ev.field[n+1] = s
+	check("bell")
+	want := math.Log(2) / math.Log(float64(n))
+	if h := vonNeumann(ev.field, n, ev.rho); math.Abs(h-want) > 1e-8 {
+		t.Fatalf("bell entropy %v, want %v", h, want)
+	}
+
 	hs, hf := ev.score(nil)
-	if hf != 0 {
+	if hs != 0 || hf != 0 {
 		t.Fatalf("empty score %v %v", hs, hf)
 	}
 }
@@ -268,6 +312,9 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 	ahs, ahf := measure(cfg, apart)
 	if ahs < ths+0.05 {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
+	}
+	if math.Abs(ths-thf) > 1e-8 || math.Abs(ahs-ahf) > 1e-8 {
+		t.Fatalf("frequency entropy %v %v, spatial %v %v", thf, ahf, ths, ahs)
 	}
 	if math.Abs(fitness(ahf)-ahf) > 1e-15 || math.Abs(fitness(thf)-thf) > 1e-15 {
 		t.Fatalf("fitness %v %v, frequency entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
