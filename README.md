@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the single lowest-scoring state, and leaves the proposal only when the lower block entropy pays for the move.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the single lowest-scoring state.
 
 ## Units
 
@@ -30,13 +30,13 @@ Each galaxy is a Gaussian envelope of width `σ` centered at `(X, Y)`, moving wi
 - spectral width `σ_k = 1 / (2σ)`
 - an internal phase `φ`
 
-The field `Ψ` is the coherent sum of the packets. `H_spatial` is the von Neumann entropy of the entanglement between `x` and `y`, divided by `log(grid)`. A product wave scores 0 and a maximally entangled wave scores 1.
+The field `Ψ` is the coherent sum of the packets. `H_spatial` is the Shannon entropy of `|Ψ|²`, divided by `log` of the number of cells. One occupied cell scores 0 and a flat field scores 1.
 
-`H_block` splits that grid into blocks of 8 cells on a side, or half the grid when that is smaller. It is the von Neumann entropy of the entanglement between the block index and the offset inside the block, divided by the log of the smaller factor. Blocks that carry the same interior wave score 0, and a wave that differs from block to block scores higher. A Fourier transform inside each block, taken separately along each axis, leaves `H_block` unchanged, so it is computed from `Ψ` directly.
+`H_block` splits that grid into blocks of 8 cells on a side, or half the grid when that is smaller. Each block is transformed by its own quantum Fourier transform, and `H_block` is the Shannon entropy of the resulting power, divided by `log` of the number of cells. A spectrum in a single bin scores 0 and a flat spectrum scores 1.
 
-Spatial entropy is measured and reported, and it does not enter the score. The search score is `H_block` plus `0.03` times the mean squared distance from the Newtonian proposal, measured in units of the mutation scales. Lower is better. A move is kept only when the drop in block entropy exceeds that charge, and the printed entropies do not include it. A non-finite block entropy is skipped.
+Spatial entropy is measured and reported, and it does not enter the score. The search score is `H_block`. Lower is better. A non-finite block entropy is skipped.
 
-The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when no move pays for itself.
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when it shares the lowest score.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 

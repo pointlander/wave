@@ -82,7 +82,7 @@ func DefaultConfig() Config {
 		Iterations: 48,
 		Widen:      1,
 		Explore:    0.15,
-		Rollout:    2,
+		Rollout:    4,
 		Gravity:    newtonG,
 		Softening:  modelSoft * boxKpc,
 		Hbar:       modelHbar * boxKpc * v,
@@ -149,10 +149,10 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is the block entropy of the accepted frame. Spatial entropy is
-// recorded and is not part of the score. Agree is true when that frame
-// matches the Newtonian proposal. AgreeCount and AgreeRate accumulate that
-// comparison over the run.
+// Fitness is the Shannon entropy of the block quantum Fourier transform of
+// the accepted frame. Spatial entropy is recorded and is not part of the
+// score. Agree is true when that frame matches the Newtonian proposal.
+// AgreeCount and AgreeRate accumulate that comparison over the run.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
@@ -185,10 +185,9 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 }
 
 // Step roots a Monte Carlo tree search at a Newtonian proposal and keeps the
-// single best-scoring frame. The score is the block entropy plus a
-// charge for leaving the proposal, so a small entropy drop does not move
-// the galaxies. Reported entropy is measured on the accepted frame and does
-// not include the charge. Spatial entropy is not part of the score.
+// single best-scoring frame. The score is the Shannon entropy of the block
+// quantum Fourier transform. Reported entropy is measured on the accepted
+// frame. Spatial entropy is not part of the score.
 // Momentum is held at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {

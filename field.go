@@ -4,37 +4,42 @@
 
 package main
 
-import (
-	"math"
-	"math/cmplx"
-)
+import "math"
 
 const packetTail = 4.5
 
 // tileCells is the side of each spatial block, in grid cells. The scored
-// entropy is the entanglement between the block index and the offset
-// inside the block. A Fourier transform inside a block, taken separately
-// along each axis, leaves that entropy unchanged.
+// entropy is the Shannon entropy of the power in a quantum Fourier
+// transform of each block.
 const tileCells = 8
 
-// evaluator rasterizes the coherent wave field and scores its quantum entropy.
+// evaluator rasterizes the coherent wave field and scores the entropy of
+// its block quantum Fourier transform.
 type evaluator struct {
 	cfg     Config
 	fft     fft2
+	tileFFT fft2
+	tileN   int
 	field   []complex128
 	scratch []complex128
-	rho     []complex128
+	tile    []complex128
 }
 
 func newEvaluator(cfg Config) *evaluator {
 	n := cfg.Grid * cfg.Grid
-	return &evaluator{
+	e := &evaluator{
 		cfg:     cfg,
 		fft:     newFFT2(cfg.Grid),
 		field:   make([]complex128, n),
 		scratch: make([]complex128, n),
-		rho:     make([]complex128, n),
 	}
+	b := tileSide(cfg.Grid)
+	if b >= 2 {
+		e.tileN = b
+		e.tileFFT = newFFT2(b)
+		e.tile = make([]complex128, b*b)
+	}
+	return e
 }
 
 // render writes Ψ, the coherent sum of Gaussian packets.
@@ -83,16 +88,36 @@ func (e *evaluator) render(ps []Particle) {
 	}
 }
 
-// score returns the axis entanglement of Ψ and the block entanglement the
-// search minimizes. hs is the entanglement between x and y. hf splits the
-// grid into tiles of tileCells and is the entanglement between the tile
-// index and the offset inside the tile.
+// score returns the Shannon entropy of |Ψ|² and the Shannon entropy of the
+// power after a quantum Fourier transform of each block. hs is reported.
+// hf is the search score. Both are divided by the log of the number of
+// cells, so a single occupied bin scores 0 and a flat distribution scores 1.
 func (e *evaluator) score(ps []Particle) (hs, hf float64) {
-	g := e.cfg.Grid
 	e.render(ps)
-	hs = vonNeumann(e.field, g, e.rho)
-	hf = blockEntropy(e.field, g, tileSide(g), e.rho)
-	return hs, hf
+	hs = shannon(e.field)
+	if e.tileN < 2 {
+		return hs, 0
+	}
+	e.blockQFT(e.scratch, e.field)
+	return hs, shannon(e.scratch)
+}
+
+// blockQFT writes the quantum Fourier transform of each tileN block of src
+// into dst. The transform is the two-dimensional DFT inside the block.
+func (e *evaluator) blockQFT(dst, src []complex128) {
+	n := e.cfg.Grid
+	b := e.tileN
+	for y0 := 0; y0 < n; y0 += b {
+		for x0 := 0; x0 < n; x0 += b {
+			for ly := 0; ly < b; ly++ {
+				copy(e.tile[ly*b:(ly+1)*b], src[(y0+ly)*n+x0:(y0+ly)*n+x0+b])
+			}
+			e.tileFFT.transform(e.tile, false)
+			for ly := 0; ly < b; ly++ {
+				copy(dst[(y0+ly)*n+x0:(y0+ly)*n+x0+b], e.tile[ly*b:(ly+1)*b])
+			}
+		}
+	}
 }
 
 // tileSide is the block side in cells for an n by n grid. It is the
@@ -130,193 +155,32 @@ func (e *evaluator) densityAndSpectrum(ps []Particle) (density, spectrum []float
 	return density, fftShift(power, g)
 }
 
-// vonNeumann is the entanglement entropy between the two axes of psi,
-// divided by log(n). psi is row-major n by n. A product wave scores 0 and
-// a maximally entangled wave scores 1. rho is an n*n scratch buffer.
-// The solve runs on the calling goroutine.
-func vonNeumann(psi []complex128, n int, rho []complex128) float64 {
-	if n <= 1 {
+// shannon is the Shannon entropy of the normalized power |z|², divided by
+// log of the number of bins. One occupied bin scores 0 and a flat
+// distribution scores 1. An empty field scores 0.
+func shannon(a []complex128) float64 {
+	if len(a) <= 1 {
 		return 0
 	}
 	var norm float64
-	for _, z := range psi {
+	for _, z := range a {
 		norm += real(z)*real(z) + imag(z)*imag(z)
 	}
 	if norm == 0 || math.IsNaN(norm) || math.IsInf(norm, 0) {
 		return 0
 	}
 	inv := 1 / norm
-	for y1 := 0; y1 < n; y1++ {
-		row1 := y1 * n
-		for y2 := 0; y2 < n; y2++ {
-			row2 := y2 * n
-			var re, im float64
-			for x := 0; x < n; x++ {
-				re1, im1 := real(psi[row1+x]), imag(psi[row1+x])
-				re2, im2 := real(psi[row2+x]), imag(psi[row2+x])
-				re += re1*re2 + im1*im2
-				im += im1*re2 - re1*im2
-			}
-			rho[y1*n+y2] = complex(re*inv, im*inv)
-		}
-	}
-	return entropyOfRho(rho, n)
-}
-
-// blockEntropy is the entanglement between the block index and the offset
-// inside the block, divided by the log of the smaller factor. psi is
-// row-major n by n and b is the block side in cells. Identical interiors
-// score 0 and a maximally entangled cut scores 1. rho is scratch of at
-// least side*side, where side is that smaller factor. The solve runs on
-// the calling goroutine.
-func blockEntropy(psi []complex128, n, b int, rho []complex128) float64 {
-	if n < 4 || b < 2 || b >= n || n%b != 0 {
-		return 0
-	}
-	m := n / b
-	local := b * b
-	blocks := m * m
-	var norm float64
-	for _, z := range psi {
-		norm += real(z)*real(z) + imag(z)*imag(z)
-	}
-	if norm == 0 || math.IsNaN(norm) || math.IsInf(norm, 0) {
-		return 0
-	}
-	inv := 1 / norm
-	// Diagonalize the smaller factor. The entropy is the same either way.
-	if local <= blocks {
-		for l1 := 0; l1 < local; l1++ {
-			ly1, lx1 := l1/b, l1%b
-			for l2 := 0; l2 < local; l2++ {
-				ly2, lx2 := l2/b, l2%b
-				var re, im float64
-				for by := 0; by < m; by++ {
-					row1 := (by*b + ly1) * n
-					row2 := (by*b + ly2) * n
-					for bx := 0; bx < m; bx++ {
-						re1, im1 := real(psi[row1+bx*b+lx1]), imag(psi[row1+bx*b+lx1])
-						re2, im2 := real(psi[row2+bx*b+lx2]), imag(psi[row2+bx*b+lx2])
-						re += re1*re2 + im1*im2
-						im += im1*re2 - re1*im2
-					}
-				}
-				rho[l1*local+l2] = complex(re*inv, im*inv)
-			}
-		}
-		return entropyOfRho(rho, local)
-	}
-	for c1 := 0; c1 < blocks; c1++ {
-		by1, bx1 := c1/m, c1%m
-		for c2 := 0; c2 < blocks; c2++ {
-			by2, bx2 := c2/m, c2%m
-			var re, im float64
-			for ly := 0; ly < b; ly++ {
-				row1 := (by1*b+ly)*n + bx1*b
-				row2 := (by2*b+ly)*n + bx2*b
-				for lx := 0; lx < b; lx++ {
-					re1, im1 := real(psi[row1+lx]), imag(psi[row1+lx])
-					re2, im2 := real(psi[row2+lx]), imag(psi[row2+lx])
-					re += re1*re2 + im1*im2
-					im += im1*re2 - re1*im2
-				}
-			}
-			rho[c1*blocks+c2] = complex(re*inv, im*inv)
-		}
-	}
-	return entropyOfRho(rho, blocks)
-}
-
-// entropyOfRho is the von Neumann entropy of a side by side reduced state
-// already stored in rho, divided by log(side).
-func entropyOfRho(rho []complex128, side int) float64 {
-	if side <= 1 {
-		return 0
-	}
 	h := 0.0
-	for _, lam := range hermitianEigenvalues(rho, side) {
-		if lam > 1e-15 {
-			h -= lam * math.Log(lam)
+	for _, z := range a {
+		p := (real(z)*real(z) + imag(z)*imag(z)) * inv
+		if p > 0 {
+			h -= p * math.Log(p)
 		}
 	}
 	if math.IsNaN(h) || math.IsInf(h, 0) || h < 0 {
 		return 0
 	}
-	return h / math.Log(float64(side))
-}
-
-// hermitianEigenvalues returns the eigenvalues of the n by n Hermitian
-// matrix a, overwriting a. Jacobi rotations drive the off-diagonal entries
-// to zero.
-func hermitianEigenvalues(a []complex128, n int) []float64 {
-	const tol = 1e-14
-	for sweep := 0; sweep < 40; sweep++ {
-		off := 0.0
-		for p := 0; p < n; p++ {
-			for q := p + 1; q < n; q++ {
-				off += cmplx.Abs(a[p*n+q])
-			}
-		}
-		if off <= tol {
-			break
-		}
-		for p := 0; p < n; p++ {
-			for q := p + 1; q < n; q++ {
-				jacobiHermitian(a, n, p, q)
-			}
-		}
-	}
-	ev := make([]float64, n)
-	for i := 0; i < n; i++ {
-		ev[i] = real(a[i*n+i])
-	}
-	return ev
-}
-
-// jacobiHermitian zeros a[p,q] with a unitary rotation in the p-q plane.
-func jacobiHermitian(a []complex128, n, p, q int) {
-	apq := a[p*n+q]
-	mag := cmplx.Abs(apq)
-	if mag < 1e-15 {
-		return
-	}
-	// Remove the phase of a[p,q] by a diagonal unitary on q.
-	ph := apq / complex(mag, 0)
-	conj := cmplx.Conj(ph)
-	for k := 0; k < n; k++ {
-		if k == q {
-			continue
-		}
-		a[k*n+q] *= conj
-		a[q*n+k] *= ph
-	}
-	a[q*n+q] = complex(real(a[q*n+q]), 0)
-	app := real(a[p*n+p])
-	aqq := real(a[q*n+q])
-	tau := (aqq - app) / (2 * mag)
-	var t float64
-	if tau >= 0 {
-		t = 1 / (tau + math.Hypot(1, tau))
-	} else {
-		t = -1 / (-tau + math.Hypot(1, tau))
-	}
-	c := 1 / math.Hypot(1, t)
-	s := t * c
-	for k := 0; k < n; k++ {
-		if k == p || k == q {
-			continue
-		}
-		kp := a[k*n+p]
-		kq := a[k*n+q]
-		a[k*n+p] = complex(c, 0)*kp - complex(s, 0)*kq
-		a[k*n+q] = complex(s, 0)*kp + complex(c, 0)*kq
-		a[p*n+k] = cmplx.Conj(a[k*n+p])
-		a[q*n+k] = cmplx.Conj(a[k*n+q])
-	}
-	a[p*n+p] = complex(app-t*mag, 0)
-	a[q*n+q] = complex(aqq+t*mag, 0)
-	a[p*n+q] = 0
-	a[q*n+p] = 0
+	return h / math.Log(float64(len(a)))
 }
 
 func fftShift(v []float64, n int) []float64 {

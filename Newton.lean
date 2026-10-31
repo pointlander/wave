@@ -3,8 +3,12 @@
 -- license that can be found in the LICENSE file.
 
 /-
-The Newtonian proposal is the reality the search keeps when no rival's
-drop in block entropy exceeds the departure charge.
+This file records the retired charged score. The simulator now scores
+the Shannon entropy of a block quantum Fourier transform and does not
+add a departure charge.
+
+The Newtonian proposal is the reality that charged score keeps when no
+rival's drop in block entropy exceeds the departure charge.
 
 `departure` is the mean squared residual against the proposal. `score`
 adds `λ` times that residual to the entropy. A block QFT, modeled here

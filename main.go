@@ -5,8 +5,8 @@
 // Command wave simulates a two-dimensional group of galaxies. Each galaxy
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
-// then searches around that proposal. The score is block entropy plus
-// a charge for leaving that proposal. The lowest-scoring frame is kept.
+// then searches around that proposal. The score is the Shannon entropy of
+// a quantum Fourier transform on each block. The lowest-scoring frame is kept.
 package main
 
 import (
@@ -60,10 +60,8 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "Usage: wave [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
-		fmt.Fprintf(os.Stderr, "The score splits the grid into blocks of 8 cells and is the\n")
-		fmt.Fprintf(os.Stderr, "entanglement between the block index and the offset inside\n")
-		fmt.Fprintf(os.Stderr, "the block, plus a charge for leaving the Newtonian proposal.\n")
-		fmt.Fprintf(os.Stderr, "The lowest-scoring frame is kept.\n")
+		fmt.Fprintf(os.Stderr, "The score is the Shannon entropy of a quantum Fourier transform\n")
+		fmt.Fprintf(os.Stderr, "on each block of 8 cells. The lowest-scoring frame is kept.\n")
 		fmt.Fprintf(os.Stderr, "Each rollout step tries 4 mutations, continues from the best,\n")
 		fmt.Fprintf(os.Stderr, "and adds that winner to the tree. Those frames are scored\n")
 		fmt.Fprintf(os.Stderr, "in parallel, one per core.\n")
@@ -147,7 +145,7 @@ func run() (err error) {
 		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
-		fmt.Printf("mean block-entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
+		fmt.Printf("mean block-spectrum entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 		fmt.Printf("newtonian agreement %d/%d (%.3f)\n", last.AgreeCount, steps, last.AgreeRate)
 	}
 	if runFor > 0 {

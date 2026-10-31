@@ -31,38 +31,6 @@ type mctsNode struct {
 	fit       float64
 }
 
-// departure is the mean squared distance from ref, in units of the mutation
-// scales. The Newtonian proposal has departure 0 from itself.
-func departure(cfg Config, ps, ref []Particle) float64 {
-	if len(ps) == 0 || len(ps) != len(ref) {
-		return 0
-	}
-	var sum, n float64
-	for i := range ps {
-		if cfg.MutPos > 0 {
-			dx := minImage(ps[i].S.X-ref[i].S.X, cfg.L) / cfg.MutPos
-			dy := minImage(ps[i].S.Y-ref[i].S.Y, cfg.L) / cfg.MutPos
-			sum += dx*dx + dy*dy
-			n += 2
-		}
-		if cfg.MutVel > 0 {
-			dvx := (ps[i].S.VX - ref[i].S.VX) / cfg.MutVel
-			dvy := (ps[i].S.VY - ref[i].S.VY) / cfg.MutVel
-			sum += dvx*dvx + dvy*dvy
-			n += 2
-		}
-		if cfg.MutPhase > 0 {
-			dp := phaseDelta(ps[i].F.Phase, ref[i].F.Phase) / cfg.MutPhase
-			sum += dp * dp
-			n++
-		}
-	}
-	if n == 0 {
-		return 0
-	}
-	return sum / n
-}
-
 func mutate(cfg Config, rng *randRand, ps []Particle) {
 	for i := range ps {
 		ps[i].S.X += cfg.MutPos * rng.NormFloat64()
@@ -224,9 +192,8 @@ func mutateFinished(cfg Config, rng *randRand, from []Particle, px, py float64) 
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
 // The returned state is the single best-scoring frame. The score is the
-// block entropy plus a charge for leaving the Newtonian proposal.
-// Reported entropies are measured on that frame and do not include the
-// charge. Spatial entropy is not part of the score.
+// Shannon entropy of the block quantum Fourier transform. Spatial entropy
+// is not part of the score.
 func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
 	_, states := runMCTS(cfg, rng, base, px, py)
 	best = bestState(states)
@@ -245,8 +212,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	root = &mctsNode{particles: cloneParticles(base)}
 	rootPair := pool.scoreAll([][]Particle{root.particles})[0]
 	root.hs, root.hf = rootPair.hs, rootPair.hf
-	ref := root.particles
-	root.fit = stateScore(cfg, root.hf, root.particles, ref)
+	root.fit = stateScore(root.hf)
 	root.visits = 1
 	root.valueSum = root.fit
 	root.mean = root.fit
@@ -273,7 +239,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		}
 		scored := pool.scoreAll(frames)
 
-		cfit := stateScore(cfg, scored[0].hf, childP, ref)
+		cfit := stateScore(scored[0].hf)
 		child := &mctsNode{
 			parent:    node,
 			particles: childP,
@@ -284,7 +250,7 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		node.children = append(node.children, child)
 		states = append(states, scoredState{particles: childP, fit: cfit})
 
-		dfit := stateScore(cfg, scored[1].hf, deeperP, ref)
+		dfit := stateScore(scored[1].hf)
 		deeper := &mctsNode{
 			parent:    child,
 			particles: deeperP,
@@ -301,13 +267,13 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		}
 		rollParent := deeper
 		if len(first) > 0 {
-			next, nextFit, v := adoptBatch(first, scored[2:], ref, cfg, &states, value)
+			next, nextFit, v := adoptBatch(first, scored[2:], &states, value)
 			value = v
 			winner := &mctsNode{parent: rollParent, particles: next, fit: nextFit}
 			rollParent.children = append(rollParent.children, winner)
 			rollParent = winner
 			for d := 1; d < cfg.Rollout; d++ {
-				samples, nxt, nxtFit := rolloutStep(cfg, rng, pool, next, ref, px, py)
+				samples, nxt, nxtFit := rolloutStep(cfg, rng, pool, next, px, py)
 				for _, s := range samples {
 					states = append(states, s)
 					if s.fit < value {
@@ -331,10 +297,10 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 
 // adoptBatch records a rollout batch in draw order and returns the lowest
 // score. The earliest sample wins a tie. states and value are updated.
-func adoptBatch(frames [][]Particle, scored []scorePair, ref []Particle, cfg Config, states *[]scoredState, value float64) (next []Particle, nextFit, newValue float64) {
+func adoptBatch(frames [][]Particle, scored []scorePair, states *[]scoredState, value float64) (next []Particle, nextFit, newValue float64) {
 	newValue = value
 	for i, ps := range frames {
-		fit := stateScore(cfg, scored[i].hf, ps, ref)
+		fit := stateScore(scored[i].hf)
 		*states = append(*states, scoredState{particles: ps, fit: fit})
 		if fit < newValue {
 			newValue = fit
@@ -350,7 +316,7 @@ func adoptBatch(frames [][]Particle, scored []scorePair, ref []Particle, cfg Con
 // rolloutStep scores rolloutBatch mutations of from and continues from the
 // lowest score. The earliest sample wins a tie. A nil pool scores on the
 // caller; otherwise the batch is scored concurrently.
-func rolloutStep(cfg Config, rng *randRand, pool *scorePool, from, ref []Particle, px, py float64) (samples []scoredState, next []Particle, nextFit float64) {
+func rolloutStep(cfg Config, rng *randRand, pool *scorePool, from []Particle, px, py float64) (samples []scoredState, next []Particle, nextFit float64) {
 	frames := make([][]Particle, rolloutBatch)
 	for b := range frames {
 		frames[b] = mutateFinished(cfg, rng, from, px, py)
@@ -366,7 +332,7 @@ func rolloutStep(cfg Config, rng *randRand, pool *scorePool, from, ref []Particl
 		scored = pool.scoreAll(frames)
 	}
 	for i, ps := range frames {
-		fit := stateScore(cfg, scored[i].hf, ps, ref)
+		fit := stateScore(scored[i].hf)
 		samples = append(samples, scoredState{particles: ps, fit: fit})
 		if next == nil || fit < nextFit {
 			next = ps
@@ -401,13 +367,9 @@ func bestState(states []scoredState) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// departureCost is the block entropy charged for a mean squared
-// mutation of 1 away from the Newtonian proposal. A move is kept only when
-// it lowers the block entropy by more than this charge.
-const departureCost = 0.03
-
-// fitness is the block entropy. Lower is better. Spatial entropy
-// is not part of the score. A non-finite block entropy scores +Inf.
+// fitness is the Shannon entropy of the block quantum Fourier transform.
+// Lower is better. Spatial entropy is not part of the score. A non-finite
+// entropy scores +Inf.
 func fitness(hf float64) float64 {
 	if math.IsNaN(hf) || math.IsInf(hf, 0) || hf < 0 {
 		return math.Inf(1)
@@ -415,12 +377,8 @@ func fitness(hf float64) float64 {
 	return hf
 }
 
-// stateScore is the block entropy plus the cost of leaving ref.
-// ref is the Newtonian proposal, whose own score is its block entropy.
-func stateScore(cfg Config, hf float64, ps, ref []Particle) float64 {
-	fit := fitness(hf)
-	if math.IsInf(fit, 0) {
-		return fit
-	}
-	return fit + departureCost*departure(cfg, ps, ref)
+// stateScore is the block-spectrum entropy. The Newtonian proposal has no
+// extra term.
+func stateScore(hf float64) float64 {
+	return fitness(hf)
 }

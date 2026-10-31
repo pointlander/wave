@@ -64,154 +64,52 @@ func TestMinImage(t *testing.T) {
 	}
 }
 
-func TestVonNeumannEntropy(t *testing.T) {
-	n := 4
-	rho := make([]complex128, n*n)
-	product := make([]complex128, n*n)
-	product[1*n+0] = 1
-	if h := vonNeumann(product, n, rho); h > 1e-8 {
-		t.Fatalf("product entropy %v", h)
+func TestShannonPower(t *testing.T) {
+	spike := make([]complex128, 4)
+	spike[2] = 1
+	if h := shannon(spike); h > 1e-12 {
+		t.Fatalf("spike entropy %v", h)
 	}
-	if h := vonNeumann(make([]complex128, n*n), n, rho); h != 0 {
+	if h := shannon(nil); h != 0 {
 		t.Fatalf("empty entropy %v", h)
 	}
-	bell := make([]complex128, n*n)
-	s := complex(1/math.Sqrt(2), 0)
-	bell[0] = s
-	bell[1*n+1] = s
-	want := math.Log(2) / math.Log(float64(n))
-	if h := vonNeumann(bell, n, rho); math.Abs(h-want) > 1e-8 {
-		t.Fatalf("bell entropy %v, want %v", h, want)
+	flat := []complex128{1, 1, 1, 1}
+	if math.Abs(shannon(flat)-1) > 1e-12 {
+		t.Fatalf("flat entropy %v", shannon(flat))
 	}
-	maxed := make([]complex128, n*n)
-	diag := complex(1/math.Sqrt(float64(n)), 0)
-	for i := 0; i < n; i++ {
-		maxed[i*n+i] = diag
-	}
-	if h := vonNeumann(maxed, n, rho); math.Abs(h-1) > 1e-8 {
-		t.Fatalf("maximally entangled entropy %v", h)
-	}
-
-	// These two columns are not orthogonal, so the rotation has to mix them.
-	scale := math.Sqrt(3)
-	skew := []complex128{
-		complex(1/scale, 0), complex(1/scale, 0),
-		0, complex(1/scale, 0),
-	}
-	l1 := (3 + math.Sqrt(5)) / 6
-	l2 := (3 - math.Sqrt(5)) / 6
-	skewWant := -(l1*math.Log(l1) + l2*math.Log(l2)) / math.Log(2)
-	if h := vonNeumann(skew, 2, make([]complex128, 4)); math.Abs(h-skewWant) > 1e-8 {
-		t.Fatalf("skew entropy %v, want %v", h, skewWant)
+	half := []complex128{1, 0, 1, 0}
+	if math.Abs(shannon(half)-0.5) > 1e-12 {
+		t.Fatalf("two-bin entropy %v", shannon(half))
 	}
 }
 
-func TestBlockEntropy(t *testing.T) {
-	n, b := 4, 2
-	rho := make([]complex128, n*n)
-	product := make([]complex128, n*n)
-	product[indexBL(n, b, 0, 1)] = 1
-	if h := blockEntropy(product, n, b, rho); h > 1e-8 {
-		t.Fatalf("product entropy %v", h)
-	}
-	if h := blockEntropy(make([]complex128, n*n), n, b, rho); h != 0 {
-		t.Fatalf("empty entropy %v", h)
-	}
-	bell := make([]complex128, n*n)
-	s := complex(1/math.Sqrt(2), 0)
-	bell[indexBL(n, b, 0, 0)] = s
-	bell[indexBL(n, b, 1, 1)] = s
-	want := math.Log(2) / math.Log(4)
-	if h := blockEntropy(bell, n, b, rho); math.Abs(h-want) > 1e-8 {
-		t.Fatalf("bell entropy %v, want %v", h, want)
-	}
-	maxed := make([]complex128, n*n)
-	diag := complex(0.5, 0)
-	for i := 0; i < 4; i++ {
-		maxed[indexBL(n, b, i, i)] = diag
-	}
-	if h := blockEntropy(maxed, n, b, rho); math.Abs(h-1) > 1e-8 {
-		t.Fatalf("maximally entangled entropy %v", h)
-	}
-
-	// Embed the 2×2 skew state in the block/offset cut. Extra eigenvalues
-	// are zero, and the normalizer is the full smaller factor.
-	scale := math.Sqrt(3)
-	skew := make([]complex128, n*n)
-	skew[indexBL(n, b, 0, 0)] = complex(1/scale, 0)
-	skew[indexBL(n, b, 1, 0)] = complex(1/scale, 0)
-	skew[indexBL(n, b, 1, 1)] = complex(1/scale, 0)
-	l1 := (3 + math.Sqrt(5)) / 6
-	l2 := (3 - math.Sqrt(5)) / 6
-	skewWant := -(l1*math.Log(l1) + l2*math.Log(l2)) / math.Log(4)
-	if h := blockEntropy(skew, n, b, rho); math.Abs(h-skewWant) > 1e-8 {
-		t.Fatalf("skew entropy %v, want %v", h, skewWant)
-	}
-}
-
-// indexBL maps a block index and an offset index to a row-major cell.
-func indexBL(n, b, block, local int) int {
-	m := n / b
-	by, bx := block/m, block%m
-	ly, lx := local/b, local%b
-	return (by*b+ly)*n + bx*b + lx
-}
-
-func TestTileQFTPreservesBlockEntropy(t *testing.T) {
-	n, b := 16, 8
-	rng := newRNG(1)
-	psi := make([]complex128, n*n)
-	for i := range psi {
-		psi[i] = complex(rng.NormFloat64(), rng.NormFloat64())
-	}
-	rho := make([]complex128, n*n)
-	before := blockEntropy(psi, n, b, rho)
-	tileQFT(psi, n, b)
-	after := blockEntropy(psi, n, b, rho)
-	if math.Abs(before-after) > 1e-8 {
-		t.Fatalf("block entropy %v, after tile QFT %v", before, after)
-	}
-}
-
-// tileQFT applies a 2D Fourier transform inside each b×b block.
-func tileQFT(a []complex128, n, b int) {
-	f := newFFT2(b)
-	tile := make([]complex128, b*b)
-	for y0 := 0; y0 < n; y0 += b {
-		for x0 := 0; x0 < n; x0 += b {
-			for ly := 0; ly < b; ly++ {
-				copy(tile[ly*b:(ly+1)*b], a[(y0+ly)*n+x0:(y0+ly)*n+x0+b])
-			}
-			f.transform(tile, false)
-			for ly := 0; ly < b; ly++ {
-				copy(a[(y0+ly)*n+x0:(y0+ly)*n+x0+b], tile[ly*b:(ly+1)*b])
-			}
-		}
-	}
-}
-
-func TestBlockEntropyTracksInterior(t *testing.T) {
+func TestBlockQFTEntropy(t *testing.T) {
 	cfg := testConfig()
-	cfg.Grid = 32
-	cfg.L = 1
-	cfg.Hbar = 0.01
-	cfg.Sigma = 0.015
-	packet := func(x, y, vx float64) Particle {
-		p := Particle{S: Spatial{X: x, Y: y, Mass: 1, Sigma: cfg.Sigma, VX: vx}}
-		p.SyncFrequency(cfg.Hbar)
-		return p
+	cfg.Grid = 8
+	ev := newEvaluator(cfg)
+	if ev.tileN != 4 {
+		t.Fatalf("tile %d", ev.tileN)
 	}
-	// Centers of two adjacent 8-cell blocks. Equal velocities give the
-	// same interior; a different carrier makes the interiors differ.
-	same := []Particle{packet(0.125, 0.125, 0), packet(0.375, 0.125, 0)}
-	differ := []Particle{packet(0.125, 0.125, 0), packet(0.375, 0.125, 0.4)}
-	_, hSame := measure(cfg, same)
-	_, hDiffer := measure(cfg, differ)
-	if hSame > 1e-6 {
-		t.Fatalf("matching interiors %v", hSame)
+	for i := range ev.field {
+		ev.field[i] = 1
 	}
-	if hDiffer < hSame+0.05 {
-		t.Fatalf("matching %v, differing %v", hSame, hDiffer)
+	ev.blockQFT(ev.scratch, ev.field)
+	// Four equal DC bins out of 64.
+	if h := shannon(ev.scratch); math.Abs(h-math.Log(4)/math.Log(64)) > 1e-9 {
+		t.Fatalf("constant field entropy %v", h)
+	}
+	for i := range ev.field {
+		ev.field[i] = 0
+	}
+	ev.field[0] = 1
+	ev.blockQFT(ev.scratch, ev.field)
+	// A spike spreads across its 4×4 block.
+	if h := shannon(ev.scratch); math.Abs(h-math.Log(16)/math.Log(64)) > 1e-9 {
+		t.Fatalf("spike entropy %v", h)
+	}
+	hs, hf := ev.score(nil)
+	if hf != 0 {
+		t.Fatalf("empty score %v %v", hs, hf)
 	}
 }
 
@@ -373,7 +271,7 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
 	}
 	if math.Abs(fitness(ahf)-ahf) > 1e-15 || math.Abs(fitness(thf)-thf) > 1e-15 {
-		t.Fatalf("fitness %v %v, block entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
+		t.Fatalf("fitness %v %v, block spectrum entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
 	}
 }
 
@@ -382,40 +280,22 @@ func TestFitnessIsFrequencyEntropy(t *testing.T) {
 		t.Fatalf("fitness = %v", got)
 	}
 	if fitness(0) != 0 {
-		t.Fatal("zero block entropy should be the best fitness")
+		t.Fatal("zero block-spectrum entropy should be the best fitness")
 	}
 	if !math.IsInf(fitness(math.NaN()), 1) {
-		t.Fatal("non-finite block entropy should be the worst fitness")
+		t.Fatal("non-finite block-spectrum entropy should be the worst fitness")
 	}
 	if !math.IsInf(fitness(-0.1), 1) {
-		t.Fatal("negative block entropy should be the worst fitness")
+		t.Fatal("negative block-spectrum entropy should be the worst fitness")
 	}
 }
 
-func TestDepartureChargesLeavingNewton(t *testing.T) {
-	cfg := testConfig()
-	ref := []Particle{{
-		S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma},
-		F: Frequency{Phase: 0.2},
-	}}
-	if departure(cfg, ref, ref) != 0 {
-		t.Fatal("the proposal should have no departure")
+func TestScoreIsBlockSpectrumEntropy(t *testing.T) {
+	if stateScore(0.5) != 0.5 {
+		t.Fatalf("score %v", stateScore(0.5))
 	}
-	moved := cloneParticles(ref)
-	moved[0].S.X += cfg.MutPos
-	moved[0].F.Phase += cfg.MutPhase
-	d := departure(cfg, moved, ref)
-	if math.Abs(d-0.4) > 1e-12 {
-		t.Fatalf("departure = %v", d)
-	}
-	stay := stateScore(cfg, 0.50, ref, ref)
-	short := stateScore(cfg, 0.50-departureCost*d+1e-4, moved, ref)
-	if short <= stay {
-		t.Fatalf("unpaid move %v beat the proposal %v", short, stay)
-	}
-	paid := stateScore(cfg, 0.50-departureCost*d-0.01, moved, ref)
-	if paid >= stay {
-		t.Fatalf("paid move %v lost to the proposal %v", paid, stay)
+	if !math.IsInf(stateScore(math.NaN()), 1) {
+		t.Fatal("non-finite entropy should be the worst score")
 	}
 }
 
@@ -571,7 +451,7 @@ func TestRolloutContinuesFromBestSample(t *testing.T) {
 	from := []Particle{p}
 	pool := newScorePool(cfg)
 	defer pool.stop()
-	samples, next, _ := rolloutStep(cfg, newRNG(1), pool, from, from, 0, 0)
+	samples, next, _ := rolloutStep(cfg, newRNG(1), pool, from, 0, 0)
 	if len(samples) != rolloutBatch {
 		t.Fatalf("samples = %d", len(samples))
 	}
@@ -603,10 +483,10 @@ func TestParallelRolloutMatchesSerial(t *testing.T) {
 		t.Fatal(err)
 	}
 	px, py := momentum(ps)
-	serial, sNext, sFit := rolloutStep(cfg, newRNG(5), nil, ps, ps, px, py)
+	serial, sNext, sFit := rolloutStep(cfg, newRNG(5), nil, ps, px, py)
 	pool := newScorePool(cfg)
 	defer pool.stop()
-	parallel, pNext, pFit := rolloutStep(cfg, newRNG(5), pool, ps, ps, px, py)
+	parallel, pNext, pFit := rolloutStep(cfg, newRNG(5), pool, ps, px, py)
 	if sFit != pFit || !mechanicsAgree(sNext, pNext, cfg.L) {
 		t.Fatalf("winner serial %v parallel %v", sFit, pFit)
 	}
