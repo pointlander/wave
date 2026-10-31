@@ -149,7 +149,7 @@ func (c Config) Validate() error {
 }
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
-// Fitness is the Shannon entropy of the block quantum Fourier transform of
+// Fitness is the Shannon entropy of the quantum Fourier transform of
 // the accepted frame. Spatial entropy is recorded and is not part of the
 // score. Agree is true when that frame matches the Newtonian proposal.
 // AgreeCount and AgreeRate accumulate that comparison over the run.
@@ -185,8 +185,8 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 }
 
 // Step roots a Monte Carlo tree search at a Newtonian proposal and keeps the
-// single best-scoring frame. The score is the Shannon entropy of the block
-// quantum Fourier transform. Reported entropy is measured on the accepted
+// single best-scoring frame. The score is the Shannon entropy of the
+// quantum Fourier transform of Ψ. Reported entropy is measured on the accepted
 // frame. Spatial entropy is not part of the score.
 // Momentum is held at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {

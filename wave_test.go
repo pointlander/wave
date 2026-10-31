@@ -83,28 +83,27 @@ func TestShannonPower(t *testing.T) {
 	}
 }
 
-func TestBlockQFTEntropy(t *testing.T) {
+func TestFullQFTEntropy(t *testing.T) {
 	cfg := testConfig()
 	cfg.Grid = 8
 	ev := newEvaluator(cfg)
-	if ev.tileN != 4 {
-		t.Fatalf("tile %d", ev.tileN)
-	}
 	for i := range ev.field {
 		ev.field[i] = 1
 	}
-	ev.blockQFT(ev.scratch, ev.field)
-	// Four equal DC bins out of 64.
-	if h := shannon(ev.scratch); math.Abs(h-math.Log(4)/math.Log(64)) > 1e-9 {
+	copy(ev.scratch, ev.field)
+	ev.fft.transform(ev.scratch, false)
+	// A constant field transforms to one DC bin.
+	if h := shannon(ev.scratch); h > 1e-9 {
 		t.Fatalf("constant field entropy %v", h)
 	}
 	for i := range ev.field {
 		ev.field[i] = 0
 	}
 	ev.field[0] = 1
-	ev.blockQFT(ev.scratch, ev.field)
-	// A spike spreads across its 4×4 block.
-	if h := shannon(ev.scratch); math.Abs(h-math.Log(16)/math.Log(64)) > 1e-9 {
+	copy(ev.scratch, ev.field)
+	ev.fft.transform(ev.scratch, false)
+	// A spike transforms to a flat spectrum.
+	if h := shannon(ev.scratch); math.Abs(h-1) > 1e-9 {
 		t.Fatalf("spike entropy %v", h)
 	}
 	hs, hf := ev.score(nil)
@@ -271,7 +270,7 @@ func TestCoherentClusterHasLowerEntropy(t *testing.T) {
 		t.Fatalf("spatial entropy together %v, apart %v", ths, ahs)
 	}
 	if math.Abs(fitness(ahf)-ahf) > 1e-15 || math.Abs(fitness(thf)-thf) > 1e-15 {
-		t.Fatalf("fitness %v %v, block spectrum entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
+		t.Fatalf("fitness %v %v, frequency entropy %v %v", fitness(ahf), fitness(thf), ahf, thf)
 	}
 }
 
@@ -280,13 +279,13 @@ func TestFitnessIsFrequencyEntropy(t *testing.T) {
 		t.Fatalf("fitness = %v", got)
 	}
 	if fitness(0) != 0 {
-		t.Fatal("zero block-spectrum entropy should be the best fitness")
+		t.Fatal("zero frequency entropy should be the best fitness")
 	}
 	if !math.IsInf(fitness(math.NaN()), 1) {
-		t.Fatal("non-finite block-spectrum entropy should be the worst fitness")
+		t.Fatal("non-finite frequency entropy should be the worst fitness")
 	}
 	if !math.IsInf(fitness(-0.1), 1) {
-		t.Fatal("negative block-spectrum entropy should be the worst fitness")
+		t.Fatal("negative frequency entropy should be the worst fitness")
 	}
 }
 

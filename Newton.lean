@@ -4,7 +4,7 @@
 
 /-
 This file records the retired charged score. The simulator now scores
-the Shannon entropy of a block quantum Fourier transform and does not
+the Shannon entropy of the quantum Fourier transform of Ψ and does not
 add a departure charge.
 
 The Newtonian proposal is the reality that charged score keeps when no

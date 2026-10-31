@@ -6,7 +6,7 @@
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
 // then searches around that proposal. The score is the Shannon entropy of
-// a quantum Fourier transform on each block. The lowest-scoring frame is kept.
+// a quantum Fourier transform of the whole field. The lowest-scoring frame is kept.
 package main
 
 import (
@@ -61,7 +61,7 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
 		fmt.Fprintf(os.Stderr, "The score is the Shannon entropy of a quantum Fourier transform\n")
-		fmt.Fprintf(os.Stderr, "on each block of 8 cells. The lowest-scoring frame is kept.\n")
+		fmt.Fprintf(os.Stderr, "of the whole field. The lowest-scoring frame is kept.\n")
 		fmt.Fprintf(os.Stderr, "Each rollout step tries 4 mutations, continues from the best,\n")
 		fmt.Fprintf(os.Stderr, "and adds that winner to the tree. Those frames are scored\n")
 		fmt.Fprintf(os.Stderr, "in parallel, one per core.\n")
@@ -141,11 +141,11 @@ func run() (err error) {
 			return err
 		}
 	}
-	fmt.Printf("\nspatial %.4f -> %.4f, block %.4f -> %.4f\n",
+	fmt.Printf("\nspatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
 		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
-		fmt.Printf("mean block-spectrum entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
+		fmt.Printf("mean frequency-entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 		fmt.Printf("newtonian agreement %d/%d (%.3f)\n", last.AgreeCount, steps, last.AgreeRate)
 	}
 	if runFor > 0 {
@@ -188,14 +188,14 @@ func (d *durationFlag) Set(s string) error {
 
 func traceHeader() []string {
 	return []string{
-		"step", "t_gyr", "h_spatial", "h_block", "newton",
+		"step", "t_gyr", "h_spatial", "h_frequency", "newton",
 		"sep_kpc", "kinetic", "potential", "agree", "agree_rate",
 	}
 }
 
 func printHeader() {
 	fmt.Printf("%4s %8s %9s %9s %9s %9s %12s %12s %5s %10s\n",
-		"step", "t_Gyr", "H_space", "H_block", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
+		"step", "t_Gyr", "H_space", "H_freq", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
 }
 
 func printRow(step int, time float64, r StepResult) {

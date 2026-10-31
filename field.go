@@ -8,38 +8,23 @@ import "math"
 
 const packetTail = 4.5
 
-// tileCells is the side of each spatial block, in grid cells. The scored
-// entropy is the Shannon entropy of the power in a quantum Fourier
-// transform of each block.
-const tileCells = 8
-
 // evaluator rasterizes the coherent wave field and scores the entropy of
-// its block quantum Fourier transform.
+// its quantum Fourier transform.
 type evaluator struct {
 	cfg     Config
 	fft     fft2
-	tileFFT fft2
-	tileN   int
 	field   []complex128
 	scratch []complex128
-	tile    []complex128
 }
 
 func newEvaluator(cfg Config) *evaluator {
 	n := cfg.Grid * cfg.Grid
-	e := &evaluator{
+	return &evaluator{
 		cfg:     cfg,
 		fft:     newFFT2(cfg.Grid),
 		field:   make([]complex128, n),
 		scratch: make([]complex128, n),
 	}
-	b := tileSide(cfg.Grid)
-	if b >= 2 {
-		e.tileN = b
-		e.tileFFT = newFFT2(b)
-		e.tile = make([]complex128, b*b)
-	}
-	return e
 }
 
 // render writes Ψ, the coherent sum of Gaussian packets.
@@ -89,52 +74,15 @@ func (e *evaluator) render(ps []Particle) {
 }
 
 // score returns the Shannon entropy of |Ψ|² and the Shannon entropy of the
-// power after a quantum Fourier transform of each block. hs is reported.
+// power after a quantum Fourier transform of the whole grid. hs is reported.
 // hf is the search score. Both are divided by the log of the number of
 // cells, so a single occupied bin scores 0 and a flat distribution scores 1.
 func (e *evaluator) score(ps []Particle) (hs, hf float64) {
 	e.render(ps)
 	hs = shannon(e.field)
-	if e.tileN < 2 {
-		return hs, 0
-	}
-	e.blockQFT(e.scratch, e.field)
+	copy(e.scratch, e.field)
+	e.fft.transform(e.scratch, false)
 	return hs, shannon(e.scratch)
-}
-
-// blockQFT writes the quantum Fourier transform of each tileN block of src
-// into dst. The transform is the two-dimensional DFT inside the block.
-func (e *evaluator) blockQFT(dst, src []complex128) {
-	n := e.cfg.Grid
-	b := e.tileN
-	for y0 := 0; y0 < n; y0 += b {
-		for x0 := 0; x0 < n; x0 += b {
-			for ly := 0; ly < b; ly++ {
-				copy(e.tile[ly*b:(ly+1)*b], src[(y0+ly)*n+x0:(y0+ly)*n+x0+b])
-			}
-			e.tileFFT.transform(e.tile, false)
-			for ly := 0; ly < b; ly++ {
-				copy(dst[(y0+ly)*n+x0:(y0+ly)*n+x0+b], e.tile[ly*b:(ly+1)*b])
-			}
-		}
-	}
-}
-
-// tileSide is the block side in cells for an n by n grid. It is the
-// largest power of two no greater than tileCells that leaves at least two
-// blocks along each axis.
-func tileSide(n int) int {
-	b := tileCells
-	if b > n/2 {
-		b = n / 2
-	}
-	for b >= 2 && n%b != 0 {
-		b >>= 1
-	}
-	if b < 2 {
-		return 0
-	}
-	return b
 }
 
 // densityAndSpectrum returns |Ψ|² and the fftshifted spectral power
