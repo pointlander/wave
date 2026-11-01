@@ -150,9 +150,10 @@ func (c Config) Validate() error {
 
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
 // Fitness is the Shannon entropy of the quantum Fourier transform of
-// the accepted frame. Spatial entropy is recorded and is not part of the
+// the Newtonian frame. Spatial entropy is recorded and is not part of the
 // score. HRank is the entropy of the PageRank of the galaxies.
-// Agree is true when that frame matches the Newtonian proposal.
+// Agree is true when the lowest frequency-entropy frame matches the
+// Newtonian proposal.
 // AgreeCount and AgreeRate accumulate that comparison over the run.
 // RankPred is true when the scored frame whose PageRank entropy is closest
 // to the current frame is the Newtonian proposal. Accuracy is that
@@ -193,10 +194,11 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	}, nil
 }
 
-// Step roots a Monte Carlo tree search at a Newtonian proposal and keeps the
-// single best-scoring frame. The score is the Shannon entropy of the
-// quantum Fourier transform of Ψ. Reported entropy is measured on the accepted
-// frame. Spatial entropy is not part of the score.
+// Step advances along the Newtonian proposal. Monte Carlo tree search scores
+// mutations of that proposal. The score is the Shannon entropy of the
+// quantum Fourier transform of Ψ. Reported entropy is measured on the
+// Newtonian frame. Spatial entropy is not part of the score. The search
+// result supplies that comparison and the PageRank prediction.
 // Momentum is held at the value of ps.
 func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, error) {
 	if err := cfg.Validate(); err != nil {
@@ -208,23 +210,23 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 	for i := range proposal {
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
-	_, nHf := measure(cfg, proposal)
+	hs, hf := measure(cfg, proposal)
 	rankNow := pageRankEntropy(ps, cfg.L)
-	best, states, hs, hf := search(cfg, rng, proposal, px, py)
-	kin, pot := energies(cfg, best)
+	best, states, _, _ := search(cfg, rng, proposal, px, py)
+	kin, pot := energies(cfg, proposal)
 	res := StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
-		HRank:      pageRankEntropy(best, cfg.L),
+		HRank:      pageRankEntropy(proposal, cfg.L),
 		Fitness:    fitness(hf),
-		Newton:     fitness(nHf),
-		Separation: meanSeparation(best, cfg.L),
+		Newton:     fitness(hf),
+		Separation: meanSeparation(proposal, cfg.L),
 		Kinetic:    kin,
 		Potential:  pot,
 		Agree:      mechanicsAgree(best, proposal, cfg.L),
 		RankPred:   rankPredictsNewton(states, proposal, rankNow, cfg.L),
 	}
-	return best, res, nil
+	return cloneParticles(proposal), res, nil
 }
 
 // mechanicsAgree reports whether two states describe the same mechanics.

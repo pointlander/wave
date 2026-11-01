@@ -1,6 +1,6 @@
 # wave
 
-A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state. Monte Carlo tree search around that proposal keeps the single lowest-scoring state.
+A two-dimensional n-body simulation of a group of galaxies. Each galaxy is a Gaussian wave packet with a spatial representation and a Fourier dual. Gravity proposes the next state, and the galaxies follow that Newtonian path. Monte Carlo tree search scores mutations of the proposal so PageRank entropy can be compared with it.
 
 ## Units
 
@@ -40,7 +40,7 @@ Spatial entropy and rank entropy are measured and reported, and they do not ente
 
 PageRank entropy predicts which scored frame is the Newtonian proposal. The prediction is the frame whose rank entropy is closest to the rank entropy of the current frame. The earliest frame wins a tie, and the proposal is scored first. A rollout frame's rank is one PageRank on the chain of frames that reached it: each frame is linked to the next by `e^{-r}`, including a galaxy to its image in the following frame. The root and the two expansion plies are each one frame.
 
-The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The step keeps the single best-scoring frame. The earliest frame wins a tie, and the proposal is scored first, so it is kept when it shares the lowest score.
+The search is a Monte Carlo tree search rooted at the Newtonian proposal. A move mutates position, velocity, and phase, then restores total momentum. Progressive widening limits how many children a node grows. Selection uses UCB on the average of each node's simulation returns, and a simulation returns the lowest score it reached. Tree expansion adds one mutation, then one more ply. Each rollout step scores 4 mutations and continues from the lowest score. The two new plies and that batch are scored at the same time, one frame per core. That winner is added to the tree so a later iteration can expand from it. The other samples remain candidates and are not expanded. The galaxies advance on the Newtonian proposal. The earliest scored frame wins a tie inside the search, and the proposal is scored first.
 
 The initial condition is a rotating disk of equal-mass galaxies with random phases.
 
@@ -53,7 +53,7 @@ go test ./...
 go run .
 ```
 
-A default run prints one row per step: spatial entropy, frequency entropy, rank entropy, the Newtonian proposal's frequency entropy, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the accepted frame. `agree` is 1 when that frame matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. `pred` is 1 when the PageRank prediction matches the Newtonian proposal, and `accuracy` is how often that has happened so far. The summary reports both fractions for the whole run.
+A default run prints one row per step: spatial entropy, frequency entropy, rank entropy, the Newtonian proposal's frequency entropy, mean separation in kpc, kinetic energy, and potential energy. Time in that table is Gyr. The entropies are measured on the Newtonian frame. `agree` is 1 when the lowest frequency-entropy frame matches the Newtonian proposal, and `agree_rate` is how often that has happened so far. `pred` is 1 when the PageRank prediction matches the Newtonian proposal, and `accuracy` is how often that has happened so far. The summary reports both fractions for the whole run.
 
 Run for 30 seconds of real time and write a VP9 WebM. Frames show `|Ψ|²` on the left and the fftshifted spectrum `|Ψ̂|²` on the right. `-duration` overrides `-steps`. Playback length is `frames / fps`, which is not the same as the wall-clock limit.
 

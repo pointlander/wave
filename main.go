@@ -6,7 +6,8 @@
 // is a Gaussian wave packet with a spatial representation and its Fourier
 // dual. A Newtonian step proposes the next state. Monte Carlo tree search
 // then searches around that proposal. The score is the Shannon entropy of
-// a quantum Fourier transform of the whole field. The lowest-scoring frame is kept.
+// a quantum Fourier transform of the whole field. The galaxies follow the
+// Newtonian proposal.
 package main
 
 import (
@@ -61,7 +62,7 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "Run a 2D n-body simulation of galaxies. Each step is a\n")
 		fmt.Fprintf(os.Stderr, "Monte Carlo tree search around the Newtonian proposal.\n")
 		fmt.Fprintf(os.Stderr, "The score is the Shannon entropy of a quantum Fourier transform\n")
-		fmt.Fprintf(os.Stderr, "of the whole field. The lowest-scoring frame is kept.\n")
+		fmt.Fprintf(os.Stderr, "of the whole field. The galaxies follow the Newtonian proposal.\n")
 		fmt.Fprintf(os.Stderr, "Each rollout step tries 4 mutations, continues from the best,\n")
 		fmt.Fprintf(os.Stderr, "and adds that winner to the tree. Those frames are scored\n")
 		fmt.Fprintf(os.Stderr, "in parallel, one per core.\n")

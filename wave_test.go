@@ -496,6 +496,36 @@ func TestNewtonianAgreesWhenMutationsAreOff(t *testing.T) {
 	}
 }
 
+func TestStepTakesNewtonianPath(t *testing.T) {
+	cfg := testConfig()
+	cfg.Iterations = 1
+	cfg.Rollout = 0
+	rng := newRNG(cfg.Seed)
+	ps, err := Initialize(cfg, rng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, py := momentum(ps)
+	proposal := propose(cfg, ps)
+	restoreMomentum(proposal, px, py)
+	for i := range proposal {
+		proposal[i].SyncFrequency(cfg.Hbar)
+	}
+	next, res, err := Step(cfg, newRNG(cfg.Seed), ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mechanicsAgree(next, proposal, cfg.L) {
+		t.Fatal("step left the Newtonian proposal")
+	}
+	if res.Agree {
+		t.Fatal("frequency-entropy choice matched Newton with mutations enabled")
+	}
+	if math.Abs(res.Fitness-res.Newton) > 1e-12 {
+		t.Fatalf("fitness %v newton %v", res.Fitness, res.Newton)
+	}
+}
+
 func TestMergedStepKeepsMomentumAndField(t *testing.T) {
 	cfg := testConfig()
 	rng := newRNG(cfg.Seed)
