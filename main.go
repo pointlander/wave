@@ -141,8 +141,8 @@ func run() (err error) {
 			return err
 		}
 	}
-	fmt.Printf("\nspatial %.4f -> %.4f, frequency %.4f -> %.4f\n",
-		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency)
+	fmt.Printf("\nspatial %.4f -> %.4f, frequency %.4f -> %.4f, rank %.4f -> %.4f\n",
+		first.HSpatial, last.HSpatial, first.HFrequency, last.HFrequency, first.HRank, last.HRank)
 	fmt.Printf("mean separation %.4f -> %.4f\n", first.Separation, last.Separation)
 	if steps > 0 {
 		fmt.Printf("mean frequency-entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
@@ -188,14 +188,14 @@ func (d *durationFlag) Set(s string) error {
 
 func traceHeader() []string {
 	return []string{
-		"step", "t_gyr", "h_spatial", "h_frequency", "newton",
+		"step", "t_gyr", "h_spatial", "h_frequency", "h_rank", "newton",
 		"sep_kpc", "kinetic", "potential", "agree", "agree_rate",
 	}
 }
 
 func printHeader() {
-	fmt.Printf("%4s %8s %9s %9s %9s %9s %12s %12s %5s %10s\n",
-		"step", "t_Gyr", "H_space", "H_freq", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
+	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %12s %12s %5s %10s\n",
+		"step", "t_Gyr", "H_space", "H_freq", "H_rank", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
 }
 
 func printRow(step int, time float64, r StepResult) {
@@ -203,8 +203,8 @@ func printRow(step int, time float64, r StepResult) {
 	if r.Agree {
 		agree = 1
 	}
-	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f\n",
-		step, time, r.HSpatial, r.HFrequency, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
+	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f\n",
+		step, time, r.HSpatial, r.HFrequency, r.HRank, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
 }
 
 func boolInt(v bool) int {
@@ -224,6 +224,7 @@ func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps 
 			strconv.FormatFloat(time, 'f', 6, 64),
 			strconv.FormatFloat(r.HSpatial, 'f', 6, 64),
 			strconv.FormatFloat(r.HFrequency, 'f', 6, 64),
+			strconv.FormatFloat(r.HRank, 'f', 6, 64),
 			strconv.FormatFloat(r.Newton, 'f', 6, 64),
 			strconv.FormatFloat(r.Separation, 'f', 6, 64),
 			strconv.FormatFloat(r.Kinetic, 'f', 6, 64),

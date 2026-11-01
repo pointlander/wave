@@ -64,6 +64,157 @@ func TestMinImage(t *testing.T) {
 	}
 }
 
+func TestPageRankEntropy(t *testing.T) {
+	if pageRankEntropy(nil, 1) != 0 {
+		t.Fatal("empty rank entropy")
+	}
+	one := []Particle{{S: Spatial{X: 0.2, Y: 0.3}}}
+	if pageRankEntropy(one, 1) != 0 {
+		t.Fatal("single galaxy rank entropy")
+	}
+	pair := []Particle{
+		{S: Spatial{X: 0.1, Y: 0.2}},
+		{S: Spatial{X: 0.7, Y: 0.8}},
+	}
+	if math.Abs(pageRankEntropy(pair, 1)-1) > 1e-12 {
+		t.Fatalf("pair rank entropy %v", pageRankEntropy(pair, 1))
+	}
+	cfg := testConfig()
+	for i := range pair {
+		pair[i].S.Mass = 1
+		pair[i].S.Sigma = cfg.Sigma
+		pair[i].SyncFrequency(cfg.Hbar)
+	}
+	res, err := Observe(cfg, pair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(res.HRank-1) > 1e-12 {
+		t.Fatalf("observed rank entropy %v", res.HRank)
+	}
+	s := 0.1
+	tri := []Particle{
+		{S: Spatial{X: 0.5, Y: 0.5}},
+		{S: Spatial{X: 0.5 + s, Y: 0.5}},
+		{S: Spatial{X: 0.5 + s/2, Y: 0.5 + s*math.Sqrt(3)/2}},
+	}
+	if math.Abs(pageRankEntropy(tri, 1)-1) > 1e-9 {
+		t.Fatalf("triangle rank entropy %v", pageRankEntropy(tri, 1))
+	}
+
+	// A coincident pair and a distant third. At this separation the third
+	// galaxy's links vanish, so its rank is the teleport mass (1-α)/3.
+	far := []Particle{
+		{S: Spatial{X: 0, Y: 0}},
+		{S: Spatial{X: 0, Y: 0}},
+		{S: Spatial{X: 100, Y: 0}},
+	}
+	c := (1 - pageRankDamping) / 3
+	a := (1 - c) / 2
+	want := -(2*a*math.Log(a) + c*math.Log(c)) / math.Log(3)
+	if got := pageRankEntropy(far, 1000); math.Abs(got-want) > 1e-9 {
+		t.Fatalf("cluster rank entropy %v, want %v", got, want)
+	}
+
+	// C sits across the periodic boundary from A and B.
+	wrapped := []Particle{
+		{S: Spatial{X: 0, Y: 0.5}},
+		{S: Spatial{X: 0.10, Y: 0.5}},
+		{S: Spatial{X: 0.95, Y: 0.5}},
+	}
+	got := pageRankEntropy(wrapped, 1)
+	if math.Abs(got-rankEntropyOracle([]float64{0.10, 0.05, 0.15})) > 1e-12 {
+		t.Fatalf("wrapped rank entropy %v", got)
+	}
+	unwrapped := rankEntropyOracle([]float64{0.10, 0.95, 0.85})
+	if math.Abs(got-unwrapped) < 1e-6 {
+		t.Fatalf("wrapped entropy %v matches the long-way distances %v", got, unwrapped)
+	}
+	if traceHeader()[4] != "h_rank" {
+		t.Fatalf("trace header %v", traceHeader())
+	}
+}
+
+// rankEntropyOracle is the normalized entropy of PageRank on a triangle
+// whose pairwise separations are ab, ac, bc. Link weights are e^{-r}.
+func rankEntropyOracle(sep []float64) float64 {
+	r := [][]float64{
+		{0, sep[0], sep[1]},
+		{sep[0], 0, sep[2]},
+		{sep[1], sep[2], 0},
+	}
+	n := 3
+	p := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		p[i] = make([]float64, n)
+		var sum float64
+		for j := 0; j < n; j++ {
+			if i == j {
+				continue
+			}
+			p[i][j] = math.Exp(-r[i][j])
+			sum += p[i][j]
+		}
+		for j := 0; j < n; j++ {
+			p[i][j] /= sum
+		}
+	}
+	a := make([][]float64, n)
+	b := make([]float64, n)
+	invN := 1 / float64(n)
+	for i := 0; i < n; i++ {
+		a[i] = make([]float64, n)
+		b[i] = (1 - pageRankDamping) * invN
+		for j := 0; j < n; j++ {
+			a[i][j] = -pageRankDamping * p[j][i]
+		}
+		a[i][i] += 1
+	}
+	x := solveLinear(a, b)
+	h := 0.0
+	for _, v := range x {
+		if v > 0 {
+			h -= v * math.Log(v)
+		}
+	}
+	return h / math.Log(float64(n))
+}
+
+func solveLinear(a [][]float64, b []float64) []float64 {
+	n := len(b)
+	m := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		m[i] = append(append([]float64{}, a[i]...), b[i])
+	}
+	for col := 0; col < n; col++ {
+		piv := col
+		for row := col + 1; row < n; row++ {
+			if math.Abs(m[row][col]) > math.Abs(m[piv][col]) {
+				piv = row
+			}
+		}
+		m[col], m[piv] = m[piv], m[col]
+		div := m[col][col]
+		for c := col; c <= n; c++ {
+			m[col][c] /= div
+		}
+		for row := 0; row < n; row++ {
+			if row == col {
+				continue
+			}
+			f := m[row][col]
+			for c := col; c <= n; c++ {
+				m[row][c] -= f * m[col][c]
+			}
+		}
+	}
+	x := make([]float64, n)
+	for i := 0; i < n; i++ {
+		x[i] = m[i][n]
+	}
+	return x
+}
+
 func TestShannonPower(t *testing.T) {
 	spike := make([]complex128, 4)
 	spike[2] = 1

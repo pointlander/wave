@@ -151,11 +151,13 @@ func (c Config) Validate() error {
 // StepResult is one accepted state, plus the Newtonian proposal's fitness.
 // Fitness is the Shannon entropy of the quantum Fourier transform of
 // the accepted frame. Spatial entropy is recorded and is not part of the
-// score. Agree is true when that frame matches the Newtonian proposal.
+// score. HRank is the entropy of the PageRank of the galaxies.
+// Agree is true when that frame matches the Newtonian proposal.
 // AgreeCount and AgreeRate accumulate that comparison over the run.
 type StepResult struct {
 	HSpatial   float64
 	HFrequency float64
+	HRank      float64
 	Fitness    float64
 	Newton     float64
 	Separation float64
@@ -177,6 +179,7 @@ func Observe(cfg Config, ps []Particle) (StepResult, error) {
 	return StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
+		HRank:      pageRankEntropy(ps, cfg.L),
 		Fitness:    fitness(hf),
 		Separation: meanSeparation(ps, cfg.L),
 		Kinetic:    kin,
@@ -205,6 +208,7 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 	res := StepResult{
 		HSpatial:   hs,
 		HFrequency: hf,
+		HRank:      pageRankEntropy(best, cfg.L),
 		Fitness:    fitness(hf),
 		Newton:     fitness(nHf),
 		Separation: meanSeparation(best, cfg.L),

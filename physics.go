@@ -209,6 +209,94 @@ func energies(cfg Config, ps []Particle) (kinetic, potential float64) {
 	return kinetic, potential
 }
 
+// pageRankDamping is the probability a walker follows a link. The rest
+// of the step jumps to a galaxy chosen uniformly.
+const pageRankDamping = 0.85
+
+// pageRankEntropy is the Shannon entropy of the PageRank of the galaxies,
+// divided by log of their number. The undirected link weight between two
+// galaxies is e^{-r}, where r is their periodic separation. A uniform rank
+// scores 1. Fewer than two galaxies score 0.
+func pageRankEntropy(ps []Particle, L float64) float64 {
+	n := len(ps)
+	if n < 2 {
+		return 0
+	}
+	trans := make([]float64, n*n)
+	for i := 0; i < n; i++ {
+		minR := math.Inf(1)
+		for j := 0; j < n; j++ {
+			if i == j {
+				continue
+			}
+			dx := minImage(ps[j].S.X-ps[i].S.X, L)
+			dy := minImage(ps[j].S.Y-ps[i].S.Y, L)
+			r := math.Hypot(dx, dy)
+			trans[i*n+j] = r
+			if r < minR {
+				minR = r
+			}
+		}
+		var sum float64
+		for j := 0; j < n; j++ {
+			if i == j {
+				continue
+			}
+			w := math.Exp(-(trans[i*n+j] - minR))
+			trans[i*n+j] = w
+			sum += w
+		}
+		if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
+			for j := 0; j < n; j++ {
+				trans[i*n+j] = 1 / float64(n)
+			}
+			continue
+		}
+		for j := 0; j < n; j++ {
+			trans[i*n+j] /= sum
+		}
+	}
+
+	rank := make([]float64, n)
+	next := make([]float64, n)
+	invN := 1 / float64(n)
+	for i := range rank {
+		rank[i] = invN
+	}
+	tele := (1 - pageRankDamping) * invN
+	for iter := 0; iter < 1000; iter++ {
+		for j := range next {
+			next[j] = tele
+		}
+		for i := 0; i < n; i++ {
+			pi := pageRankDamping * rank[i]
+			row := i * n
+			for j := 0; j < n; j++ {
+				next[j] += pi * trans[row+j]
+			}
+		}
+		var diff float64
+		for i := range rank {
+			diff += math.Abs(next[i] - rank[i])
+		}
+		rank, next = next, rank
+		if diff < 1e-15 {
+			break
+		}
+	}
+
+	h := 0.0
+	for _, p := range rank {
+		if p > 0 {
+			h -= p * math.Log(p)
+		}
+	}
+	if math.IsNaN(h) || math.IsInf(h, 0) || h < 0 {
+		return 0
+	}
+	return h / math.Log(float64(n))
+}
+
 func meanSeparation(ps []Particle, L float64) float64 {
 	n := len(ps)
 	if n < 2 {
