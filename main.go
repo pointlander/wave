@@ -147,6 +147,7 @@ func run() (err error) {
 	if steps > 0 {
 		fmt.Printf("mean frequency-entropy improvement over the Newtonian proposal %.4f\n", gain/float64(steps))
 		fmt.Printf("newtonian agreement %d/%d (%.3f)\n", last.AgreeCount, steps, last.AgreeRate)
+		fmt.Printf("pagerank accuracy %d/%d (%.3f)\n", last.RankPredCount, steps, last.Accuracy)
 	}
 	if runFor > 0 {
 		fmt.Printf("ran %d steps in %.3fs\n", steps, elapsed.Seconds())
@@ -189,13 +190,13 @@ func (d *durationFlag) Set(s string) error {
 func traceHeader() []string {
 	return []string{
 		"step", "t_gyr", "h_spatial", "h_frequency", "h_rank", "newton",
-		"sep_kpc", "kinetic", "potential", "agree", "agree_rate",
+		"sep_kpc", "kinetic", "potential", "agree", "agree_rate", "pred", "accuracy",
 	}
 }
 
 func printHeader() {
-	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %12s %12s %5s %10s\n",
-		"step", "t_Gyr", "H_space", "H_freq", "H_rank", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate")
+	fmt.Printf("%4s %8s %9s %9s %9s %9s %9s %12s %12s %5s %10s %4s %8s\n",
+		"step", "t_Gyr", "H_space", "H_freq", "H_rank", "newton", "sep_kpc", "KE", "PE", "agree", "agree_rate", "pred", "accuracy")
 }
 
 func printRow(step int, time float64, r StepResult) {
@@ -203,8 +204,12 @@ func printRow(step int, time float64, r StepResult) {
 	if r.Agree {
 		agree = 1
 	}
-	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f\n",
-		step, time, r.HSpatial, r.HFrequency, r.HRank, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate)
+	pred := 0
+	if r.RankPred {
+		pred = 1
+	}
+	fmt.Printf("%4d %8.3f %9.4f %9.4f %9.4f %9.4f %9.2f %12.3e %12.3e %5d %10.4f %4d %8.4f\n",
+		step, time, r.HSpatial, r.HFrequency, r.HRank, r.Newton, r.Separation, r.Kinetic, r.Potential, agree, r.AgreeRate, pred, r.Accuracy)
 }
 
 func boolInt(v bool) int {
@@ -231,6 +236,8 @@ func writeOutputs(dir string, csvW *csv.Writer, enc *webmWriter, cfg Config, ps 
 			strconv.FormatFloat(r.Potential, 'f', 6, 64),
 			strconv.Itoa(boolInt(r.Agree)),
 			strconv.FormatFloat(r.AgreeRate, 'f', 6, 64),
+			strconv.Itoa(boolInt(r.RankPred)),
+			strconv.FormatFloat(r.Accuracy, 'f', 6, 64),
 		}
 		if err := csvW.Write(row); err != nil {
 			return err

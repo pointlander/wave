@@ -191,14 +191,15 @@ func mutateFinished(cfg Config, rng *randRand, from []Particle, px, py float64) 
 }
 
 // search runs Monte Carlo tree search rooted at the Newtonian proposal.
-// The returned state is the single best-scoring frame. The score is the
+// The returned state is the single best-scoring frame, and states retains
+// every scored frame with the proposal first. The score is the
 // Shannon entropy of the quantum Fourier transform of Ψ. Spatial entropy
 // is not part of the score.
-func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, hs, hf float64) {
-	_, states := runMCTS(cfg, rng, base, px, py)
+func search(cfg Config, rng *randRand, base []Particle, px, py float64) (best []Particle, states []scoredState, hs, hf float64) {
+	_, states = runMCTS(cfg, rng, base, px, py)
 	best = bestState(states)
 	hs, hf = newEvaluator(cfg).score(best)
-	return best, hs, hf
+	return best, states, hs, hf
 }
 
 // runMCTS returns the tree and every state it scored, root first.
@@ -365,6 +366,38 @@ func bestState(states []scoredState) []Particle {
 		best = 0
 	}
 	return cloneParticles(states[best].particles)
+}
+
+// bestRankState returns the frame with the lowest PageRank entropy. The
+// earliest frame wins a tie, and the Newtonian proposal is first. A
+// non-finite entropy is skipped. When every entropy is non-finite, the
+// first frame is returned.
+func bestRankState(states []scoredState, L float64) []Particle {
+	if len(states) == 0 {
+		return nil
+	}
+	best := -1
+	bestH := math.Inf(1)
+	for i, s := range states {
+		h := pageRankEntropy(s.particles, L)
+		if math.IsNaN(h) || math.IsInf(h, 0) {
+			continue
+		}
+		if best < 0 || h < bestH {
+			best = i
+			bestH = h
+		}
+	}
+	if best < 0 {
+		best = 0
+	}
+	return cloneParticles(states[best].particles)
+}
+
+// rankPredictsNewton reports whether the lowest PageRank entropy among the
+// scored frames is the Newtonian proposal.
+func rankPredictsNewton(states []scoredState, proposal []Particle, L float64) bool {
+	return mechanicsAgree(bestRankState(states, L), proposal, L)
 }
 
 // fitness is the Shannon entropy of the quantum Fourier transform of Ψ.

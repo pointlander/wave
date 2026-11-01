@@ -491,6 +491,9 @@ func TestNewtonianAgreesWhenMutationsAreOff(t *testing.T) {
 	if steps != 2 || last.AgreeCount != 2 || math.Abs(last.AgreeRate-1) > 1e-12 {
 		t.Fatalf("steps %d agree %d rate %v", steps, last.AgreeCount, last.AgreeRate)
 	}
+	if last.RankPredCount != 2 || math.Abs(last.Accuracy-1) > 1e-12 {
+		t.Fatalf("pagerank accuracy %d rate %v", last.RankPredCount, last.Accuracy)
+	}
 }
 
 func TestMergedStepKeepsMomentumAndField(t *testing.T) {
@@ -561,6 +564,40 @@ func TestBestState(t *testing.T) {
 	only := bestState(perfect)
 	if math.Abs(only[0].S.X-0.80) > 1e-9 || math.Abs(only[1].S.X-0.70) > 1e-9 {
 		t.Fatalf("zero score did not win: %v %v", only[0].S.X, only[1].S.X)
+	}
+}
+
+func TestRankPredictsNewtonian(t *testing.T) {
+	L := 1000.0
+	side := 1.0
+	spread := []Particle{
+		{S: Spatial{X: 100, Y: 100}},
+		{S: Spatial{X: 100 + side, Y: 100}},
+		{S: Spatial{X: 100 + side/2, Y: 100 + side*math.Sqrt(3)/2}},
+	}
+	cluster := []Particle{
+		{S: Spatial{X: 0, Y: 0}},
+		{S: Spatial{X: 0, Y: 0}},
+		{S: Spatial{X: 100, Y: 0}},
+	}
+	if pageRankEntropy(cluster, L) >= pageRankEntropy(spread, L) {
+		t.Fatalf("cluster %v spread %v", pageRankEntropy(cluster, L), pageRankEntropy(spread, L))
+	}
+	miss := []scoredState{{particles: spread}, {particles: cluster}}
+	if rankPredictsNewton(miss, spread, L) {
+		t.Fatal("clustered mutant was not preferred")
+	}
+	hit := []scoredState{{particles: cluster}, {particles: spread}}
+	if !rankPredictsNewton(hit, cluster, L) {
+		t.Fatal("proposal lost to a higher rank entropy")
+	}
+	tie := []scoredState{{particles: spread}, {particles: cloneParticles(spread)}}
+	if !rankPredictsNewton(tie, spread, L) {
+		t.Fatal("tie did not keep the proposal")
+	}
+	header := traceHeader()
+	if header[len(header)-2] != "pred" || header[len(header)-1] != "accuracy" {
+		t.Fatalf("trace header %v", header)
 	}
 }
 

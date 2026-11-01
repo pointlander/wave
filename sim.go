@@ -154,18 +154,23 @@ func (c Config) Validate() error {
 // score. HRank is the entropy of the PageRank of the galaxies.
 // Agree is true when that frame matches the Newtonian proposal.
 // AgreeCount and AgreeRate accumulate that comparison over the run.
+// RankPred is true when the scored frame with the lowest PageRank entropy
+// is the Newtonian proposal. Accuracy is that prediction's rate over the run.
 type StepResult struct {
-	HSpatial   float64
-	HFrequency float64
-	HRank      float64
-	Fitness    float64
-	Newton     float64
-	Separation float64
-	Kinetic    float64
-	Potential  float64
-	Agree      bool
-	AgreeCount int
-	AgreeRate  float64
+	HSpatial      float64
+	HFrequency    float64
+	HRank         float64
+	Fitness       float64
+	Newton        float64
+	Separation    float64
+	Kinetic       float64
+	Potential     float64
+	Agree         bool
+	AgreeCount    int
+	AgreeRate     float64
+	RankPred      bool
+	RankPredCount int
+	Accuracy      float64
 }
 
 // Observe measures the current state. Newton is left at 0; a step that
@@ -203,7 +208,7 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
 	_, nHf := measure(cfg, proposal)
-	best, hs, hf := search(cfg, rng, proposal, px, py)
+	best, states, hs, hf := search(cfg, rng, proposal, px, py)
 	kin, pot := energies(cfg, best)
 	res := StepResult{
 		HSpatial:   hs,
@@ -215,6 +220,7 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 		Kinetic:    kin,
 		Potential:  pot,
 		Agree:      mechanicsAgree(best, proposal, cfg.L),
+		RankPred:   rankPredictsNewton(states, proposal, cfg.L),
 	}
 	return best, res, nil
 }
@@ -277,6 +283,7 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 	start := time.Now()
 	simTime := 0.0
 	agreed := 0
+	predicted := 0
 	for {
 		if duration > 0 {
 			if time.Since(start) >= duration {
@@ -294,8 +301,13 @@ func simulate(cfg Config, rng *randRand, ps []Particle, duration time.Duration, 
 		if res.Agree {
 			agreed++
 		}
+		if res.RankPred {
+			predicted++
+		}
 		res.AgreeCount = agreed
 		res.AgreeRate = float64(agreed) / float64(steps)
+		res.RankPredCount = predicted
+		res.Accuracy = float64(predicted) / float64(steps)
 		simTime += cfg.DT
 		last = res
 		if emit != nil {
