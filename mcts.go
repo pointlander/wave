@@ -94,10 +94,14 @@ func selectChild(cfg Config, n *mctsNode) *mctsNode {
 	return best
 }
 
-// scoredState is one frame the search evaluated, with its current-frame fitness.
+// scoredState is one frame the search evaluated, with its current-frame
+// fitness. rank is the PageRank entropy used to predict the Newtonian
+// proposal. A rollout frame's rank is the entropy of the chain of frames
+// leading to it, not of that frame alone.
 type scoredState struct {
 	particles []Particle
 	fit       float64
+	rank      float64
 }
 
 // scorePair is one frame's entropies. The Jacobi solve that produces it
@@ -217,7 +221,11 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 	root.visits = 1
 	root.valueSum = root.fit
 	root.mean = root.fit
-	states = append(states, scoredState{particles: root.particles, fit: root.fit})
+	states = append(states, scoredState{
+		particles: root.particles,
+		fit:       root.fit,
+		rank:      pageRankEntropy(root.particles, cfg.L),
+	})
 
 	for i := 0; i < cfg.Iterations; i++ {
 		node := root
@@ -249,7 +257,11 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 			fit:       cfit,
 		}
 		node.children = append(node.children, child)
-		states = append(states, scoredState{particles: childP, fit: cfit})
+		states = append(states, scoredState{
+			particles: childP,
+			fit:       cfit,
+			rank:      pageRankEntropy(childP, cfg.L),
+		})
 
 		dfit := stateScore(scored[1].hf)
 		deeper := &mctsNode{
@@ -260,7 +272,11 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 			fit:       dfit,
 		}
 		child.children = append(child.children, deeper)
-		states = append(states, scoredState{particles: deeperP, fit: dfit})
+		states = append(states, scoredState{
+			particles: deeperP,
+			fit:       dfit,
+			rank:      pageRankEntropy(deeperP, cfg.L),
+		})
 
 		value := cfit
 		if dfit < value {
@@ -270,20 +286,28 @@ func runMCTS(cfg Config, rng *randRand, base []Particle, px, py float64) (root *
 		if len(first) > 0 {
 			next, nextFit, v := adoptBatch(first, scored[2:], &states, value)
 			value = v
+			// The rollout is one graph. It starts at the state being rolled
+			// out, and each later sample is linked onto the frames that
+			// reached it.
+			chain := [][]Particle{deeperP}
+			stampRolloutRank(&states, chain, cfg.L)
 			winner := &mctsNode{parent: rollParent, particles: next, fit: nextFit}
 			rollParent.children = append(rollParent.children, winner)
 			rollParent = winner
+			chain = append(chain, next)
 			for d := 1; d < cfg.Rollout; d++ {
 				samples, nxt, nxtFit := rolloutStep(cfg, rng, pool, next, px, py)
-				for _, s := range samples {
-					states = append(states, s)
-					if s.fit < value {
-						value = s.fit
+				for i := range samples {
+					samples[i].rank = rolloutRank(chain, samples[i].particles, cfg.L)
+					states = append(states, samples[i])
+					if samples[i].fit < value {
+						value = samples[i].fit
 					}
 				}
 				w := &mctsNode{parent: rollParent, particles: nxt, fit: nxtFit}
 				rollParent.children = append(rollParent.children, w)
 				rollParent = w
+				chain = append(chain, nxt)
 				next = nxt
 			}
 		}
@@ -368,18 +392,36 @@ func bestState(states []scoredState) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// bestRankState returns the frame whose PageRank entropy is closest to
-// target. The earliest frame wins a tie, and the Newtonian proposal is
+// stampRolloutRank sets the PageRank entropy of the rollout batch just
+// appended to states. Each sample extends chain by one frame.
+func stampRolloutRank(states *[]scoredState, chain [][]Particle, L float64) {
+	n := len(*states)
+	start := n - rolloutBatch
+	for i := start; i < n; i++ {
+		(*states)[i].rank = rolloutRank(chain, (*states)[i].particles, L)
+	}
+}
+
+// rolloutRank is the PageRank entropy of chain followed by sample, as one graph.
+func rolloutRank(chain [][]Particle, sample []Particle, L float64) float64 {
+	path := make([][]Particle, len(chain)+1)
+	copy(path, chain)
+	path[len(chain)] = sample
+	return pageRankEntropyFrames(path, L)
+}
+
+// bestRankState returns the frame whose stored PageRank entropy is closest
+// to target. The earliest frame wins a tie, and the Newtonian proposal is
 // first. A non-finite entropy is skipped. When every entropy is
 // non-finite, the first frame is returned.
-func bestRankState(states []scoredState, target, L float64) []Particle {
+func bestRankState(states []scoredState, target float64) []Particle {
 	if len(states) == 0 {
 		return nil
 	}
 	best := -1
 	bestD := math.Inf(1)
 	for i, s := range states {
-		h := pageRankEntropy(s.particles, L)
+		h := s.rank
 		if math.IsNaN(h) || math.IsInf(h, 0) {
 			continue
 		}
@@ -398,7 +440,7 @@ func bestRankState(states []scoredState, target, L float64) []Particle {
 // rankPredictsNewton reports whether the scored frame closest in PageRank
 // entropy to the current frame is the Newtonian proposal.
 func rankPredictsNewton(states []scoredState, proposal []Particle, target, L float64) bool {
-	return mechanicsAgree(bestRankState(states, target, L), proposal, L)
+	return mechanicsAgree(bestRankState(states, target), proposal, L)
 }
 
 // fitness is the Shannon entropy of the quantum Fourier transform of Ψ.

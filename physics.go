@@ -213,66 +213,108 @@ func energies(cfg Config, ps []Particle) (kinetic, potential float64) {
 // of the step jumps to a galaxy chosen uniformly.
 const pageRankDamping = 0.85
 
-// pageRankEntropy is the Shannon entropy of the PageRank of the galaxies,
-// divided by log of their number. The undirected link weight between two
-// galaxies is e^{-r}, where r is their periodic separation. A uniform rank
-// scores 1. Fewer than two galaxies score 0.
+// pageRankEntropy is the Shannon entropy of the PageRank of one frame.
 func pageRankEntropy(ps []Particle, L float64) float64 {
-	n := len(ps)
-	if n < 2 {
+	return pageRankEntropyFrames([][]Particle{ps}, L)
+}
+
+// rankLink is one directed step of the PageRank walk. w is a distance
+// until the row is normalized into a probability.
+type rankLink struct {
+	to int
+	w  float64
+}
+
+// pageRankEntropyFrames is the Shannon entropy of one PageRank on a chain
+// of frames, divided by log of the number of nodes. Within a frame every
+// pair of galaxies is linked by e^{-r}. Consecutive frames are linked the
+// same way, including a galaxy to its own image in the next frame. A
+// uniform rank scores 1. Fewer than two nodes score 0.
+func pageRankEntropyFrames(frames [][]Particle, L float64) float64 {
+	layers := len(frames)
+	if layers == 0 || len(frames[0]) == 0 {
 		return 0
 	}
-	trans := make([]float64, n*n)
-	for i := 0; i < n; i++ {
-		minR := math.Inf(1)
-		for j := 0; j < n; j++ {
-			if i == j {
-				continue
+	n := len(frames[0])
+	for _, fr := range frames[1:] {
+		if len(fr) != n {
+			return 0
+		}
+	}
+	nodes := layers * n
+	if nodes < 2 {
+		return 0
+	}
+	rows := make([][]rankLink, nodes)
+	for layer := 0; layer < layers; layer++ {
+		base := layer * n
+		for i := 0; i < n; i++ {
+			for j := 0; j < n; j++ {
+				if i == j {
+					continue
+				}
+				r := particleSeparation(frames[layer][i], frames[layer][j], L)
+				rows[base+i] = append(rows[base+i], rankLink{to: base + j, w: r})
 			}
-			dx := minImage(ps[j].S.X-ps[i].S.X, L)
-			dy := minImage(ps[j].S.Y-ps[i].S.Y, L)
-			r := math.Hypot(dx, dy)
-			trans[i*n+j] = r
-			if r < minR {
-				minR = r
+		}
+	}
+	for layer := 0; layer+1 < layers; layer++ {
+		a := layer * n
+		b := (layer + 1) * n
+		for i := 0; i < n; i++ {
+			for j := 0; j < n; j++ {
+				r := particleSeparation(frames[layer][i], frames[layer+1][j], L)
+				rows[a+i] = append(rows[a+i], rankLink{to: b + j, w: r})
+				rows[b+j] = append(rows[b+j], rankLink{to: a + i, w: r})
+			}
+		}
+	}
+	invNodes := 1 / float64(nodes)
+	for i := range rows {
+		if len(rows[i]) == 0 {
+			continue
+		}
+		minR := math.Inf(1)
+		for _, e := range rows[i] {
+			if e.w < minR {
+				minR = e.w
 			}
 		}
 		var sum float64
-		for j := 0; j < n; j++ {
-			if i == j {
-				continue
-			}
-			w := math.Exp(-(trans[i*n+j] - minR))
-			trans[i*n+j] = w
-			sum += w
+		for k := range rows[i] {
+			rows[i][k].w = math.Exp(-(rows[i][k].w - minR))
+			sum += rows[i][k].w
 		}
 		if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
-			for j := 0; j < n; j++ {
-				trans[i*n+j] = 1 / float64(n)
-			}
+			rows[i] = nil
 			continue
 		}
-		for j := 0; j < n; j++ {
-			trans[i*n+j] /= sum
+		for k := range rows[i] {
+			rows[i][k].w /= sum
 		}
 	}
 
-	rank := make([]float64, n)
-	next := make([]float64, n)
-	invN := 1 / float64(n)
+	rank := make([]float64, nodes)
+	next := make([]float64, nodes)
 	for i := range rank {
-		rank[i] = invN
+		rank[i] = invNodes
 	}
-	tele := (1 - pageRankDamping) * invN
+	tele := (1 - pageRankDamping) * invNodes
 	for iter := 0; iter < 1000; iter++ {
 		for j := range next {
 			next[j] = tele
 		}
-		for i := 0; i < n; i++ {
+		for i := range rank {
 			pi := pageRankDamping * rank[i]
-			row := i * n
-			for j := 0; j < n; j++ {
-				next[j] += pi * trans[row+j]
+			if len(rows[i]) == 0 {
+				share := pi * invNodes
+				for j := range next {
+					next[j] += share
+				}
+				continue
+			}
+			for _, e := range rows[i] {
+				next[e.to] += pi * e.w
 			}
 		}
 		var diff float64
@@ -294,7 +336,13 @@ func pageRankEntropy(ps []Particle, L float64) float64 {
 	if math.IsNaN(h) || math.IsInf(h, 0) || h < 0 {
 		return 0
 	}
-	return h / math.Log(float64(n))
+	return h / math.Log(float64(nodes))
+}
+
+func particleSeparation(a, b Particle, L float64) float64 {
+	dx := minImage(b.S.X-a.S.X, L)
+	dy := minImage(b.S.Y-a.S.Y, L)
+	return math.Hypot(dx, dy)
 }
 
 func meanSeparation(ps []Particle, L float64) float64 {

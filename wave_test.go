@@ -585,20 +585,81 @@ func TestRankPredictsNewtonian(t *testing.T) {
 	if clusterH >= spreadH {
 		t.Fatalf("cluster %v spread %v", clusterH, spreadH)
 	}
-	frames := []scoredState{{particles: spread}, {particles: cluster}}
+	frames := []scoredState{
+		{particles: spread, rank: spreadH},
+		{particles: cluster, rank: clusterH},
+	}
 	if !rankPredictsNewton(frames, spread, spreadH, L) {
 		t.Fatal("current entropy did not keep the matching proposal")
 	}
 	if rankPredictsNewton(frames, spread, clusterH, L) {
 		t.Fatal("clustered mutant was not closer to the cluster entropy")
 	}
-	tie := []scoredState{{particles: spread}, {particles: cloneParticles(spread)}}
+	tie := []scoredState{
+		{particles: spread, rank: spreadH},
+		{particles: cloneParticles(spread), rank: spreadH},
+	}
 	if !rankPredictsNewton(tie, spread, spreadH, L) {
 		t.Fatal("tie did not keep the proposal")
 	}
 	header := traceHeader()
 	if header[len(header)-2] != "pred" || header[len(header)-1] != "accuracy" {
 		t.Fatalf("trace header %v", header)
+	}
+}
+
+func TestRolloutRankLinksFrames(t *testing.T) {
+	one := []Particle{{S: Spatial{X: 0, Y: 0}}}
+	other := []Particle{{S: Spatial{X: 0.2, Y: 0}}}
+	if math.Abs(pageRankEntropyFrames([][]Particle{one, other}, 1)-1) > 1e-12 {
+		t.Fatal("two linked copies of one galaxy should be uniform")
+	}
+	cfg := testConfig()
+	cfg.Iterations = 1
+	cfg.Rollout = 2
+	cfg.N = 3
+	cfg.Gravity = 0
+	ps := []Particle{
+		{S: Spatial{X: 0.2, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}},
+		{S: Spatial{X: 0.5, Y: 0.5, Mass: 1, Sigma: cfg.Sigma}},
+		{S: Spatial{X: 0.8, Y: 0.4, Mass: 1, Sigma: cfg.Sigma}},
+	}
+	for i := range ps {
+		ps[i].SyncFrequency(cfg.Hbar)
+	}
+	px, py := momentum(ps)
+	_, states := runMCTS(cfg, newRNG(2), ps, px, py)
+	if len(states) != 1+2+cfg.Rollout*rolloutBatch {
+		t.Fatalf("states = %d", len(states))
+	}
+	for i := 0; i < 3; i++ {
+		want := pageRankEntropy(states[i].particles, cfg.L)
+		if math.Abs(states[i].rank-want) > 1e-12 {
+			t.Fatalf("frame %d rank %v want %v", i, states[i].rank, want)
+		}
+	}
+	deeper := states[2].particles
+	first := states[3 : 3+rolloutBatch]
+	linked := false
+	for i, s := range first {
+		want := pageRankEntropyFrames([][]Particle{deeper, s.particles}, cfg.L)
+		if math.Abs(s.rank-want) > 1e-12 {
+			t.Fatalf("first sample %d rank %v want %v", i, s.rank, want)
+		}
+		if math.Abs(s.rank-pageRankEntropy(s.particles, cfg.L)) > 1e-6 {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Fatal("linking the previous frame did not change the rank entropy")
+	}
+	winner := lowestSample(first).particles
+	second := states[3+rolloutBatch:]
+	for i, s := range second {
+		want := pageRankEntropyFrames([][]Particle{deeper, winner, s.particles}, cfg.L)
+		if math.Abs(s.rank-want) > 1e-12 {
+			t.Fatalf("second sample %d rank %v want %v", i, s.rank, want)
+		}
 	}
 }
 
