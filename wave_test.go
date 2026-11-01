@@ -580,19 +580,20 @@ func TestRankPredictsNewtonian(t *testing.T) {
 		{S: Spatial{X: 0, Y: 0}},
 		{S: Spatial{X: 100, Y: 0}},
 	}
-	if pageRankEntropy(cluster, L) >= pageRankEntropy(spread, L) {
-		t.Fatalf("cluster %v spread %v", pageRankEntropy(cluster, L), pageRankEntropy(spread, L))
+	spreadH := pageRankEntropy(spread, L)
+	clusterH := pageRankEntropy(cluster, L)
+	if clusterH >= spreadH {
+		t.Fatalf("cluster %v spread %v", clusterH, spreadH)
 	}
-	miss := []scoredState{{particles: spread}, {particles: cluster}}
-	if rankPredictsNewton(miss, spread, L) {
-		t.Fatal("clustered mutant was not preferred")
+	frames := []scoredState{{particles: spread}, {particles: cluster}}
+	if !rankPredictsNewton(frames, spread, spreadH, L) {
+		t.Fatal("current entropy did not keep the matching proposal")
 	}
-	hit := []scoredState{{particles: cluster}, {particles: spread}}
-	if !rankPredictsNewton(hit, cluster, L) {
-		t.Fatal("proposal lost to a higher rank entropy")
+	if rankPredictsNewton(frames, spread, clusterH, L) {
+		t.Fatal("clustered mutant was not closer to the cluster entropy")
 	}
 	tie := []scoredState{{particles: spread}, {particles: cloneParticles(spread)}}
-	if !rankPredictsNewton(tie, spread, L) {
+	if !rankPredictsNewton(tie, spread, spreadH, L) {
 		t.Fatal("tie did not keep the proposal")
 	}
 	header := traceHeader()

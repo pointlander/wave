@@ -368,24 +368,25 @@ func bestState(states []scoredState) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// bestRankState returns the frame with the lowest PageRank entropy. The
-// earliest frame wins a tie, and the Newtonian proposal is first. A
-// non-finite entropy is skipped. When every entropy is non-finite, the
-// first frame is returned.
-func bestRankState(states []scoredState, L float64) []Particle {
+// bestRankState returns the frame whose PageRank entropy is closest to
+// target. The earliest frame wins a tie, and the Newtonian proposal is
+// first. A non-finite entropy is skipped. When every entropy is
+// non-finite, the first frame is returned.
+func bestRankState(states []scoredState, target, L float64) []Particle {
 	if len(states) == 0 {
 		return nil
 	}
 	best := -1
-	bestH := math.Inf(1)
+	bestD := math.Inf(1)
 	for i, s := range states {
 		h := pageRankEntropy(s.particles, L)
 		if math.IsNaN(h) || math.IsInf(h, 0) {
 			continue
 		}
-		if best < 0 || h < bestH {
+		d := math.Abs(h - target)
+		if best < 0 || d < bestD {
 			best = i
-			bestH = h
+			bestD = d
 		}
 	}
 	if best < 0 {
@@ -394,10 +395,10 @@ func bestRankState(states []scoredState, L float64) []Particle {
 	return cloneParticles(states[best].particles)
 }
 
-// rankPredictsNewton reports whether the lowest PageRank entropy among the
-// scored frames is the Newtonian proposal.
-func rankPredictsNewton(states []scoredState, proposal []Particle, L float64) bool {
-	return mechanicsAgree(bestRankState(states, L), proposal, L)
+// rankPredictsNewton reports whether the scored frame closest in PageRank
+// entropy to the current frame is the Newtonian proposal.
+func rankPredictsNewton(states []scoredState, proposal []Particle, target, L float64) bool {
+	return mechanicsAgree(bestRankState(states, target, L), proposal, L)
 }
 
 // fitness is the Shannon entropy of the quantum Fourier transform of Ψ.

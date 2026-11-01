@@ -154,8 +154,9 @@ func (c Config) Validate() error {
 // score. HRank is the entropy of the PageRank of the galaxies.
 // Agree is true when that frame matches the Newtonian proposal.
 // AgreeCount and AgreeRate accumulate that comparison over the run.
-// RankPred is true when the scored frame with the lowest PageRank entropy
-// is the Newtonian proposal. Accuracy is that prediction's rate over the run.
+// RankPred is true when the scored frame whose PageRank entropy is closest
+// to the current frame is the Newtonian proposal. Accuracy is that
+// prediction's rate over the run.
 type StepResult struct {
 	HSpatial      float64
 	HFrequency    float64
@@ -208,6 +209,7 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 		proposal[i].SyncFrequency(cfg.Hbar)
 	}
 	_, nHf := measure(cfg, proposal)
+	rankNow := pageRankEntropy(ps, cfg.L)
 	best, states, hs, hf := search(cfg, rng, proposal, px, py)
 	kin, pot := energies(cfg, best)
 	res := StepResult{
@@ -220,7 +222,7 @@ func Step(cfg Config, rng *randRand, ps []Particle) ([]Particle, StepResult, err
 		Kinetic:    kin,
 		Potential:  pot,
 		Agree:      mechanicsAgree(best, proposal, cfg.L),
-		RankPred:   rankPredictsNewton(states, proposal, cfg.L),
+		RankPred:   rankPredictsNewton(states, proposal, rankNow, cfg.L),
 	}
 	return best, res, nil
 }
